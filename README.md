@@ -71,26 +71,41 @@ code --install-extension codevibe-extension-0.1.10.vsix
 
 Or in VS Code: `Cmd/Ctrl+Shift+X` → gear menu → **Install from VSIX…**
 
-### Upgrading from a previous version
+### Upgrading to a newer version
 
-Because CodeVibe is sideloaded (not from the Marketplace), VS Code won't replace the old version automatically. You need to uninstall the previous one first, then install the new release.
-
-**Terminal:**
+Installing a newer `.vsix` replaces the older one in place. Nothing to uninstall:
 
 ```bash
-# Find the installed extension ID
-code --list-extensions | grep -i codevibe
-
-# Uninstall it (replace with whatever the above command returns)
-code --uninstall-extension codepause.codevibe-verify
-
-# Install the new version
-code --install-extension codevibe-extension-<version>.vsix
+code --install-extension codevibe-extension-<newer-version>.vsix
 ```
 
-**Or in VS Code:** `Cmd/Ctrl+Shift+X` → find CodeVibe → click the gear icon → **Uninstall** → then install the new `.vsix` using **Install from VSIX…**
+Then reload VS Code (`Cmd/Ctrl+Shift+P` → **Reload Window**).
 
-After either method, reload VS Code (`Cmd/Ctrl+Shift+P` → "Reload Window").
+Your data is unaffected by an upgrade. It lives in `~/.codepause/`, outside the extension, and is never touched by installing or uninstalling.
+
+<details>
+<summary>VS Code says "a newer version is already installed"</summary>
+
+That message means the `.vsix` you downloaded is the **same version or older** than the one you already have — VS Code is declining to downgrade. It is not complaining about sideloading, and it does not mean you must uninstall.
+
+Check what you have:
+
+```bash
+code --list-extensions --show-versions | grep -i codevibe
+```
+
+Two fixes, depending on what you want:
+
+- **You meant to upgrade** — you downloaded the wrong file. Grab the current `.vsix` from the [latest release](https://github.com/waka-man/codevibe/releases/latest) and install that.
+- **You genuinely want to go back** — add `--force`:
+
+```bash
+code --install-extension codevibe-extension-<older-version>.vsix --force
+```
+
+If you have already uninstalled and want a clean start, install the latest `.vsix` again — your data was never removed, only the extension's own editor state, so onboarding will run once more.
+
+</details>
 
 ### 2. Tell it your experience level
 
