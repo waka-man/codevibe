@@ -71,6 +71,27 @@ code --install-extension codevibe-extension-0.1.10.vsix
 
 Or in VS Code: `Cmd/Ctrl+Shift+X` → gear menu → **Install from VSIX…**
 
+### Upgrading from a previous version
+
+Because CodeVibe is sideloaded (not from the Marketplace), VS Code won't replace the old version automatically. You need to uninstall the previous one first, then install the new release.
+
+**Terminal:**
+
+```bash
+# Find the installed extension ID
+code --list-extensions | grep -i codevibe
+
+# Uninstall it (replace with whatever the above command returns)
+code --uninstall-extension codepause.codevibe-verify
+
+# Install the new version
+code --install-extension codevibe-extension-<version>.vsix
+```
+
+**Or in VS Code:** `Cmd/Ctrl+Shift+X` → find CodeVibe → click the gear icon → **Uninstall** → then install the new `.vsix` using **Install from VSIX…**
+
+After either method, reload VS Code (`Cmd/Ctrl+Shift+P` → "Reload Window").
+
 ### 2. Tell it your experience level
 
 On first launch, CodeVibe asks whether you're a junior, mid, or senior developer. This sets your daily AI-usage target and how strict the review coaching is. You can change it any time with `CodeVibe: Change Experience Level`.
