@@ -26,6 +26,7 @@ import { BlindApprovalDetector } from "./core/BlindApprovalDetector";
 import { AssignmentManager } from "./assignments/AssignmentManager";
 import { PolicyEngine } from "./assignments/PolicyEngine";
 import { AssignmentReportGenerator } from "./assignments/AssignmentReportGenerator";
+import { writeAssignmentReport } from "./assignments/AssignmentReportFile";
 import { execSync } from "child_process";
 import { EventType, DeveloperLevel } from "./types";
 import { isGitRepository } from "./utils/SecurityUtils";
@@ -1271,50 +1272,51 @@ async function registerCommands(
   const exportAssignmentReport = await registerCommandSafe(
     "codePause.exportAssignmentReport",
     async () => {
-      if (
-        !assignmentManager ||
-        !metricsCollector ||
-        !metricsRepository ||
-        !policyEngine
-      ) {
-        vscode.window.showErrorMessage("Assignment manager not initialized");
-        return;
-      }
+      try {
+        if (
+          !assignmentManager ||
+          !metricsCollector ||
+          !metricsRepository ||
+          !policyEngine
+        ) {
+          vscode.window.showErrorMessage("Assignment manager not initialized");
+          return;
+        }
 
-      // Prefer the active assignment; otherwise let the student pick one.
-      let assignment = await assignmentManager.getActiveAssignment();
-      if (!assignment) {
-        const all = await assignmentManager.listAssignments();
-        if (all.length === 0) {
-          vscode.window.showInformationMessage(
-            "No assignments found. Create one first.",
-          );
-          return;
-        }
-        const selected = await vscode.window.showQuickPick(
-          all.map((a) => ({
-            label: a.name,
-            description: `${a.startDate} → ${a.endDate}`,
-            value: a.id,
-          })),
-          { placeHolder: "Select assignment to export" },
-        );
-        if (!selected) {
-          return;
-        }
-        assignment = all.find((a) => a.id === selected.value) ?? null;
+        // Prefer the active assignment; otherwise let the student pick one.
+        let assignment = await assignmentManager.getActiveAssignment();
         if (!assignment) {
-          return;
+          const all = await assignmentManager.listAssignments();
+          if (all.length === 0) {
+            vscode.window.showInformationMessage(
+              "No assignments found. Create one first.",
+            );
+            return;
+          }
+          const selected = await vscode.window.showQuickPick(
+            all.map((a) => ({
+              label: a.name,
+              description: `${a.startDate} → ${a.endDate}`,
+              value: a.id,
+            })),
+            { placeHolder: "Select assignment to export" },
+          );
+          if (!selected) {
+            return;
+          }
+          assignment = all.find((a) => a.id === selected.value) ?? null;
+          if (!assignment) {
+            return;
+          }
         }
-      }
 
-      const studentIdentifier = await vscode.window.showInputBox({
-        prompt: "Your student identifier (optional) - embedded in the report",
-        placeHolder: "e.g. student ID or email",
-      });
-      if (studentIdentifier === undefined) {
-        return;
-      } // cancelled
+        const studentIdentifier = await vscode.window.showInputBox({
+          prompt: "Your student identifier (optional) - embedded in the report",
+          placeHolder: "e.g. student ID or email",
+        });
+        if (studentIdentifier === undefined) {
+          return;
+        } // cancelled
 
       // Best effort: record the current git HEAD of the workspace
       let repoHeadCommit: string | undefined;
@@ -1394,22 +1396,34 @@ async function registerCommands(
         return;
       }
 
-      await vscode.workspace.fs.writeFile(
-        target,
-        Buffer.from(JSON.stringify(report, null, 2), "utf8"),
-      );
+        await writeAssignmentReport(
+          (uri, content) => vscode.workspace.fs.writeFile(uri, content),
+          target,
+          report,
+        );
 
       const shortHash = report.integrity.hash.slice(0, 12);
-      vscode.window
-        .showInformationMessage(
-          `Assignment report exported (integrity: ${shortHash}…). Submit this file with your assignment.`,
-          "Show File",
-        )
-        .then((action) => {
-          if (action === "Show File") {
-            vscode.commands.executeCommand("revealFileInOS", target);
-          }
-        });
+        vscode.window
+          .showInformationMessage(
+            `Assignment report exported (integrity: ${shortHash}…). Submit this file with your assignment.`,
+            "Show File",
+          )
+          .then((action) => {
+            if (action === "Show File") {
+              void vscode.commands
+                .executeCommand("revealFileInOS", target)
+                .then(undefined, (error) => {
+                  console.error("Failed to reveal assignment report:", error);
+                });
+            }
+          });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error("Failed to export assignment report:", error);
+        vscode.window.showErrorMessage(
+          `Failed to export assignment report: ${detail}`,
+        );
+      }
     },
   );
 

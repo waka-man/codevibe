@@ -2462,7 +2462,7 @@ export function getDashboardHtml(
                 const suffix = v.count > 1 ? ' (x' + v.count + ')' : '';
                 reasonLines.push(v.message + suffix);
             });
-            const tooltip = reasonLines.length ? reasonLines.join('\n') : '';
+            const tooltip = reasonLines.length ? reasonLines.join('\\n') : '';
 
             if (hasHigh) {
                 const label = violations.length === 1
@@ -2603,7 +2603,7 @@ export function getDashboardHtml(
                         </div>
 
                         <!-- Core Metric 2: Code Ownership Score -->
-                        <div class="core-metric-card \${cm.ownership.category === 'thorough' ? 'good' : cm.ownership.category === 'light' ? '' : 'warning'}">
+                        <div class="core-metric-card \${cm.ownership.category === 'thorough' || cm.ownership.category === 'not-started' ? 'good' : cm.ownership.category === 'light' ? '' : 'warning'}">
                             <div class="core-metric-header">
                                 <div>
                                     <span class="codicon codicon-checklist core-metric-icon"></span>
@@ -2614,14 +2614,14 @@ export function getDashboardHtml(
                                 Code Ownership Score
                                 <span class="help-icon" data-tooltip="How well you reviewed AI code today. 70+ = thorough, 40-69 = light, <40 = rushed. Higher is better." style="margin-left: 6px; cursor: help; opacity: 0.7;">ⓘ</span>
                             </div>
-                            <div class="core-metric-value">\${cm.ownership.score}/100</div>
+                                <div class="core-metric-value">\${cm.ownership.score}/100</div>
                             <div class="core-metric-bar">
                                 <div class="core-metric-bar-fill \${cm.ownership.score >= 70 ? 'good' : cm.ownership.score >= 40 ? 'warning' : 'danger'}"
                                      style="width: \${cm.ownership.score}%"></div>
                             </div>
                             <div class="core-metric-description">
-                                <span class="codicon codicon-\${cm.ownership.category === 'thorough' ? 'pass' : cm.ownership.category === 'light' ? 'warning' : 'error'}"></span>
-                                \${cm.ownership.category === 'thorough' ? 'Thorough Review' : cm.ownership.category === 'light' ? 'Light Review' : 'Rushed/No Review'}
+                                <span class="codicon codicon-\${cm.ownership.category === 'not-started' ? 'circle-large-outline' : cm.ownership.category === 'thorough' ? 'pass' : cm.ownership.category === 'light' ? 'warning' : 'error'}"></span>
+                                \${cm.ownership.category === 'not-started' ? 'No AI code to review yet' : cm.ownership.category === 'thorough' ? 'Thorough Review' : cm.ownership.category === 'light' ? 'Light Review' : 'Rushed/No Review'}
                             </div>
                             <div class="core-metric-footer">
                                 <span class="codicon codicon-file-code"></span>
@@ -3846,12 +3846,15 @@ export function getDashboardHtml(
         });
 
         function showError(message) {
-            document.getElementById('content').innerHTML = \`
+            const content = document.getElementById('content');
+            if (!content) return;
+
+            content.innerHTML = \`
                 <div class="empty-state">
                     <div class="empty-icon">⚠️</div>
                     <h2>Error</h2>
                     <p>\${escapeHtml(message)}</p>
-                    <button onclick="refresh()" style="margin-top: 16px;">Try Again</button>
+                    <button type="button" onclick="refresh()" style="margin-top: 16px;">Try Again</button>
                 </div>
             \`;
         }

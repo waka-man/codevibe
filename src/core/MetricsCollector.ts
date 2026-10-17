@@ -322,7 +322,8 @@ export class MetricsCollector implements IMetricsCollector {
 
     // Extract metadata for later use
     const metadata = event.metadata as any;
-    const isManualCode = metadata?.manual === true || event.source === 'manual';
+    const isManualCode =
+      metadata?.manual === true || event.source !== CodeSource.AI;
 
     // ========== NEW: Review Quality Tracking Integration ==========
 

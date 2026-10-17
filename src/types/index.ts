@@ -39,6 +39,7 @@ export enum PolicyViolationType {
 export enum CodeSource {
  AI = "ai",
  Manual = "manual",
+ Neutral = "neutral",
 }
 
 export enum DeveloperLevel {

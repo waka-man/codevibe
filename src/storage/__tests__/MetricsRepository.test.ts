@@ -7,7 +7,7 @@ jest.mock('../DatabaseManager');
 import { MetricsRepository } from '../MetricsRepository';
 import { toLocalDateString } from '../../utils/DateUtils';
 import { DatabaseManager } from '../DatabaseManager';
-import { TrackingEvent, AITool, EventType, CodingSession } from '../../types';
+import { TrackingEvent, AITool, CodeSource, EventType, CodingSession } from '../../types';
 
 describe('MetricsRepository', () => {
   let metricsRepo: MetricsRepository;
@@ -294,6 +294,30 @@ describe('MetricsRepository', () => {
       expect(metrics.aiPercentage).toBe(80);
     });
 
+    it('excludes neutral editor-assisted changes from authorship totals', async () => {
+      const targetDate = '2024-01-01';
+      const dayStart = new Date(2024, 0, 1).getTime();
+
+      mockDb.getEventsByDateRange.mockResolvedValue([
+        {
+          timestamp: dayStart + 1000,
+          tool: AITool.Copilot,
+          eventType: EventType.CodeGenerated,
+          source: CodeSource.Neutral,
+          linesOfCode: 40,
+          linesChanged: 40,
+          metadata: { editorAssisted: true },
+        } as any,
+      ]);
+      mockDb.getAllFilesForDate.mockResolvedValue([]);
+
+      const metrics = await metricsRepo.calculateDailyMetrics(targetDate);
+
+      expect(metrics.totalAILines).toBe(0);
+      expect(metrics.totalManualLines).toBe(0);
+      expect(metrics.aiPercentage).toBe(0);
+    });
+
     it('should filter out old scanner events', async () => {
       const oldTimestamp = Date.now() - (2 * 60 * 60 * 1000); // 2 hours ago
       mockDb.getEvents.mockResolvedValue([
@@ -372,8 +396,28 @@ describe('MetricsRepository', () => {
       const coreMetrics = await metricsRepo.getCoreMetrics('mid', mockThreshold);
 
       expect(coreMetrics.authorship.aiPercentage).toBe(0);
-      expect(coreMetrics.ownership.score).toBe(0);
+      expect(coreMetrics.ownership.score).toBe(100);
+      expect(coreMetrics.ownership.category).toBe('not-started');
       expect(coreMetrics.skillHealth.score).toBe(50);
+    });
+
+    it('should keep ownership at zero when AI code exists without review', async () => {
+      mockDb.getDailyMetrics.mockResolvedValue({
+        date: '2024-01-01',
+        totalEvents: 1,
+        totalAILines: 20,
+        totalManualLines: 0,
+        aiPercentage: 100,
+        reviewQualityScore: 0,
+      } as any);
+      mockDb.getFileReviewsForDate.mockResolvedValue([
+        { isReviewed: false, reviewScore: 0, linesSinceReview: 20 },
+      ] as any);
+
+      const coreMetrics = await metricsRepo.getCoreMetrics('mid', mockThreshold);
+
+      expect(coreMetrics.ownership.score).toBe(0);
+      expect(coreMetrics.ownership.category).toBe('none');
     });
   });
 

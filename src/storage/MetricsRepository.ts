@@ -438,6 +438,9 @@ export class MetricsRepository {
             (event.linesOfCode ?? 0) + (event.linesRemoved ?? 0);
 
           if (totalLinesChanged > 0) {
+            if (event.source === CodeSource.Neutral) {
+              break;
+            }
             // Check if this is manual code or AI-generated
             // CRITICAL: Check BOTH event.source AND metadata.manual
             // - event.source: Unified source (CodeSource.AI vs CodeSource.Manual)
@@ -524,6 +527,9 @@ export class MetricsRepository {
             (event.linesOfCode ?? 0) + (event.linesRemoved ?? 0);
 
           if (codeGenLinesChanged > 0) {
+            if (event.source === CodeSource.Neutral) {
+              break;
+            }
             // Check if this is manual code or AI-generated
             // CRITICAL: Check BOTH event.source AND metadata.manual
             // - event.source: Unified source (CodeSource.AI vs CodeSource.Manual)
@@ -917,8 +923,14 @@ export class MetricsRepository {
     );
 
     const ownership = {
-      score: today.reviewQualityScore || 0,
-      category: this.getOwnershipCategory(today.reviewQualityScore || 0),
+      score:
+        today.totalAILines === 0 && fileReviews.length === 0
+          ? 100
+          : today.reviewQualityScore || 0,
+      category:
+        today.totalAILines === 0 && fileReviews.length === 0
+          ? "not-started"
+          : this.getOwnershipCategory(today.reviewQualityScore || 0),
       unreviewedPercentage: today.unreviewedPercentage || 0,
       unreviewedLines: totalUnreviewedLines,
       filesNeedingReview: unreviewedFiles.length,
@@ -1188,8 +1200,8 @@ export class MetricsRepository {
         target: threshold.maxAIPercentage,
       },
       ownership: {
-        score: 0,
-        category: "none",
+        score: 100,
+        category: "not-started",
         unreviewedPercentage: 0,
         unreviewedLines: 0,
         filesNeedingReview: 0,

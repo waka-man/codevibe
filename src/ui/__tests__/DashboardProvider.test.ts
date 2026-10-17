@@ -323,6 +323,22 @@ describe('DashboardProvider', () => {
       );
     });
 
+    it('should report a dashboard load timeout', async () => {
+      jest.useFakeTimers();
+      mockMetricsRepo.calculateDailyMetrics.mockReturnValue(new Promise(() => undefined));
+
+      const refreshPromise = dashboardProvider.refresh(true);
+      await jest.advanceTimersByTimeAsync(100);
+      await jest.advanceTimersByTimeAsync(15000);
+      await refreshPromise;
+
+      expect(mockWebviewView.webview.postMessage).toHaveBeenCalledWith({
+        type: 'error',
+        message: 'Dashboard data took too long to load'
+      });
+      jest.useRealTimers();
+    });
+
     // TODO: Fix mock timing issues with shared state
     it.skip('should not refresh if view not initialized', async () => {
       // Record the number of calls before creating new provider

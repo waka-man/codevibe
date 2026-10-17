@@ -122,13 +122,14 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       }
     });
 
-    // Initial data load
+    // The webview requests its initial data after its message listener is ready.
     this.refresh();
   }
 
   // BUG #3 FIX: Debounce dashboard refresh to prevent excessive queries
   private refreshDebounceTimer: NodeJS.Timeout | undefined;
   private readonly REFRESH_DEBOUNCE_MS = 3000; // 3-5 seconds as validated
+  private readonly DASHBOARD_LOAD_TIMEOUT_MS = 15000;
   private refreshCallCount = 0; // Debug counter
 
   public async refresh(forceHtmlUpdate: boolean = false) {
@@ -180,14 +181,38 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
 
-      const data = await this.getDashboardData();
+      const data = await this.getDashboardDataWithTimeout();
       this._view.webview.postMessage({ type: "updateData", data });
     } catch (error) {
       console.error("Failed to refresh dashboard:", error);
       this._view.webview.postMessage({
         type: "error",
-        message: "Failed to load dashboard data",
+        message:
+          error instanceof Error && error.message.includes("timed out")
+            ? "Dashboard data took too long to load"
+            : "Failed to load dashboard data",
       });
+    }
+  }
+
+  private async getDashboardDataWithTimeout() {
+    let timeoutHandle: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        reject(
+          new Error(
+            `Dashboard data load timed out after ${this.DASHBOARD_LOAD_TIMEOUT_MS}ms`,
+          ),
+        );
+      }, this.DASHBOARD_LOAD_TIMEOUT_MS);
+    });
+
+    try {
+      return await Promise.race([this.getDashboardData(), timeout]);
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
     }
   }
 
