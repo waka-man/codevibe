@@ -971,18 +971,14 @@ export class UnifiedAITracker extends BaseTracker {
 
     // CRITICAL FIX: Set isAgentMode only for external-file-change
     // large-paste is manual user action (copy/paste from ChatGPT web, etc.)
-    // and should be categorized as Chat/Paste Mode, not Agent Mode.
-    // Do NOT mark large-paste as AI source — it may be legitimate human
-    // copy/paste of their own code (issue #12).
+    // and should be categorized as Chat/Paste Mode, not Agent Mode
     const isAgentMode = result.method === 'external-file-change';
-    const isLargePaste = result.method === 'large-paste';
-    const source = isLargePaste ? CodeSource.Neutral : CodeSource.AI;
 
     this.log(`[EMIT-EVENT] ${document.uri.fsPath.split('/').pop()}: +${linesOfCode} lines, -${linesRemoved} lines, ${linesChanged} total changes`);
 
     this.emitEvent({
       eventType: eventType,
-      source,
+      source: CodeSource.AI, // Unified source
       timestamp: Date.now(),
       linesOfCode: linesOfCode,
       linesRemoved: linesRemoved,        // BUG #2 FIX: Include lines removed
@@ -999,7 +995,7 @@ export class UnifiedAITracker extends BaseTracker {
         detectionMethod: result.method,
         confidence: result.confidence,
         velocity: result.metadata.velocity,
-        isAgentGenerated: !isLargePaste  // large-paste may be human-authored
+        isAgentGenerated: true  // FIX: Mark as AI-generated
       }
     });
   }
@@ -1033,12 +1029,10 @@ export class UnifiedAITracker extends BaseTracker {
     // external-file-change → file was closed (Agent Mode)
     // large-paste → file was likely open (Agent Mode for Gravity, etc.)
     const fileWasOpen = result.method === 'large-paste';
-    const isLargePaste = result.method === 'large-paste';
-    const source = isLargePaste ? CodeSource.Neutral : CodeSource.AI;
 
     this.emitEvent({
       eventType: EventType.CodeGenerated,
-      source,
+      source: CodeSource.AI,
       timestamp: Date.now(),
       linesOfCode: linesOfCode,        // For metrics: only added lines
       linesRemoved: removedLines,      // Lines removed (positive value)
@@ -1056,7 +1050,7 @@ export class UnifiedAITracker extends BaseTracker {
         detectionMethod: result.method,
         confidence: result.confidence,
         isAgentMode: isAgentMode || result.method === 'large-paste',
-        isAgentGenerated: !isLargePaste  // large-paste may be human-authored
+        isAgentGenerated: true  // FIX: Mark as AI-generated for getCodingModes
       }
     });
   }
