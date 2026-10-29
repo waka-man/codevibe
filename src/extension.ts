@@ -11,6 +11,7 @@ import { ConfigRepository } from "./storage/ConfigRepository";
 import { ConfigManager } from "./config/ConfigManager";
 import { MetricsCollector } from "./core/MetricsCollector";
 import { ThresholdManager } from "./core/ThresholdManager";
+import { applyStoredCustomThresholds } from "./utils/applyCustomThresholds";
 import { StatusBarManager } from "./ui/StatusBarManager";
 import { NotificationService } from "./ui/NotificationService";
 import { DashboardProvider } from "./ui/DashboardProvider";
@@ -352,9 +353,12 @@ async function initializeUI(context: vscode.ExtensionContext): Promise<void> {
     throw new Error("Storage must be initialized before UI");
   }
 
-  // Initialize threshold manager with user's experience level
+  // Initialize threshold manager with user's experience level AND custom thresholds.
+  // Without this, custom thresholds (e.g. max AI percentage, min review time) set in
+  // settings are silently ignored and ThresholdManager falls back to level defaults.
   const userConfig = await configRepository.getUserConfig();
   thresholdManager = new ThresholdManager(userConfig.experienceLevel);
+  applyStoredCustomThresholds(thresholdManager, configManager);
 
   // Initialize notification service
   notificationService = new NotificationService(configRepository);
@@ -1539,8 +1543,10 @@ async function registerCommands(
         await configRepository.setExperienceLevel(selected.value);
 
         // Update threshold manager
-        if (thresholdManager) {
+        if (thresholdManager && configManager) {
           thresholdManager.setLevel(selected.value);
+          // Re-apply stored custom thresholds (setLevel resets to level defaults)
+          applyStoredCustomThresholds(thresholdManager, configManager);
         }
 
         // Refresh UI

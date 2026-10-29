@@ -2,7 +2,7 @@
   "name": "codevibe-verify",
   "displayName": "CodeVibe",
   "description": "Track your coding flow. Balance AI assistance with skill development.",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "publisher": "codepause",
   "bin": {
     "codevibe-verify": "./out/cli/verify.js",
