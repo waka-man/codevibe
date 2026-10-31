@@ -165,12 +165,19 @@ export class ConfigManager {
       alertFrequency: AlertFrequency.Medium,
       enableGamification: false, // Disabled by default
       anonymizePaths: true,
+      integrityCheck: true,
       trackedTools: {
         copilot: false, // Disabled by default
         cursor: false,  // Disabled by default
         claudeCode: true // Only Claude Code enabled by default
       },
       excludedGlobs: [],
+      aiToolDetection: {
+        enabled: true,
+        scanProcesses: true,
+        watchTerminal: false,
+        readToolConfigs: false,
+      },
       onboardingCompleted: onboardingCompleted
     };
 
@@ -212,6 +219,12 @@ export class ConfigManager {
       updates.anonymizePaths = anonymizePaths;
     }
 
+    // Integrity check
+    const integrityCheck = vscodeConfig.get<boolean>('integrityCheck');
+    if (integrityCheck !== undefined && integrityCheck !== this.config?.integrityCheck) {
+      updates.integrityCheck = integrityCheck;
+    }
+
     // Tracked tools
     const trackedTools = vscodeConfig.get<{
       copilot: boolean;
@@ -226,6 +239,17 @@ export class ConfigManager {
     const excludedGlobs = vscodeConfig.get<string[]>('excludedGlobs');
     if (excludedGlobs !== undefined && JSON.stringify(excludedGlobs) !== JSON.stringify(this.config?.excludedGlobs ?? [])) {
       updates.excludedGlobs = excludedGlobs;
+    }
+
+    // AI tool detection (offline, no telemetry)
+    const aiToolDetection = vscodeConfig.get<{
+      enabled: boolean;
+      scanProcesses: boolean;
+      watchTerminal: boolean;
+      readToolConfigs: boolean;
+    }>('aiToolDetection');
+    if (aiToolDetection) {
+      updates.aiToolDetection = aiToolDetection;
     }
 
     // Apply updates if any
@@ -277,12 +301,20 @@ export class ConfigManager {
       await vscodeConfig.update('anonymizePaths', updates.anonymizePaths, true);
     }
 
+    if (updates.integrityCheck !== undefined) {
+      await vscodeConfig.update('integrityCheck', updates.integrityCheck, true);
+    }
+
     if (updates.trackedTools !== undefined) {
       await vscodeConfig.update('trackedTools', updates.trackedTools, true);
     }
 
     if (updates.excludedGlobs !== undefined) {
       await vscodeConfig.update('excludedGlobs', updates.excludedGlobs, true);
+    }
+
+    if (updates.aiToolDetection !== undefined) {
+      await vscodeConfig.update('aiToolDetection', updates.aiToolDetection, true);
     }
   }
 

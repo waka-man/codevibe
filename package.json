@@ -53,6 +53,11 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "codePause.checkForUpdates",
+        "title": "CodeVibe: Check for Updates",
+        "icon": "$(cloud-download)"
+      },
+      {
         "command": "codePause.showStats",
         "title": "CodeVibe: Show Quick Stats"
       },
@@ -220,6 +225,11 @@
           "default": true,
           "description": "Anonymize file paths in stored data"
         },
+        "codePause.integrityCheck": {
+          "type": "boolean",
+          "default": true,
+          "description": "Verify the installed extension matches its published hash on startup. On mismatch, warn and offer to reinstall the authentic version from GitHub."
+        },
         "codePause.trackedTools": {
           "type": "object",
           "default": {
@@ -236,13 +246,34 @@
           },
           "default": [],
           "description": "Extra file globs to hard-ignore (appended to the built-in node_modules/venv/build-output ignore list). Events in these paths are never tracked."
+        },
+        "codePause.aiToolDetection": {
+          "type": "object",
+          "default": {
+            "enabled": true,
+            "scanProcesses": true,
+            "watchTerminal": false,
+            "readToolConfigs": false
+          },
+          "description": "Offline AI tool/model detection. Names the tool (Copilot, Cursor, Claude Code, OpenCode, Codex, Continue, Codeium) from running local processes, installed extensions, terminal commands, git commit markers and chat sidebars. Runs entirely on this machine; nothing is sent anywhere. scanProcesses polls the local process list on a timer, readToolConfigs reads tool config files under your home directory (both can be disabled)."
+        },
+        "codePause.autoUpdateChecks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check for new CodeVibe VSIX releases after startup"
+        },
+        "codePause.updateRepository": {
+          "type": "string",
+          "default": "waka-man/codevibe",
+          "description": "GitHub repository used for CodeVibe VSIX updates"
         }
       }
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run compute-integrity && npm run compile",
     "compile": "tsc -p ./",
+    "compute-integrity": "node scripts/compute-integrity.js",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",

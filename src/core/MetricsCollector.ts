@@ -186,8 +186,12 @@ export class MetricsCollector implements IMetricsCollector {
   }
 
   private async initializeTrackers(): Promise<void> {
+    const aiToolConfig = this.configManager.getConfig().aiToolDetection;
     // Initialize UnifiedAITracker (monitors all AI code generation)
-    this.unifiedAITracker = new UnifiedAITracker((event: unknown) => this.handleEvent(event as TrackingEvent));
+    this.unifiedAITracker = new UnifiedAITracker(
+      (event: unknown) => this.handleEvent(event as TrackingEvent),
+      aiToolConfig
+    );
     // Forward effective extra exclusions (built-in ignores always apply)
     this.unifiedAITracker.setCustomExclusions(this.getEffectiveExcludedGlobs());
     await this.unifiedAITracker.initialize();

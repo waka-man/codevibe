@@ -10,6 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { BaseTracker } from './BaseTracker';
 import { AIDetector } from '../detection/AIDetector';
+import { AIToolDetector } from '../detection/AIToolDetector';
 import { EventType, CodeSource, AIClassification } from '../types';
 import { isExcludedFile, isPackageManagerManifestFile } from '../utils/ExcludedPaths';
 import { ChangeAttributionClassifier } from '../detection/ChangeAttributionClassifier';
@@ -17,6 +18,7 @@ import { isGitOperationActive, waitForGitIdle } from '../utils/GitOperationDetec
 
 export class UnifiedAITracker extends BaseTracker {
   private aiDetector: AIDetector;
+  private aiToolDetector: AIToolDetector;
   private changeClassifier: ChangeAttributionClassifier;
   private fileSystemWatcher: vscode.FileSystemWatcher | null = null;
   private openFiles: Set<string> = new Set();
@@ -53,11 +55,34 @@ export class UnifiedAITracker extends BaseTracker {
   // Defaults are always enforced via isExcludedFile; these extend them.
   private customExcludedGlobs: string[] = [];
 
-  constructor(onEvent: (event: unknown) => void) {
+  constructor(onEvent: (event: unknown) => void, aiToolConfig?: {
+    enabled?: boolean;
+    scanProcesses?: boolean;
+    watchTerminal?: boolean;
+    readToolConfigs?: boolean;
+  }) {
     // Use 'ai' as unified source (not tool-specific)
     super('ai' as any, onEvent);
     this.aiDetector = new AIDetector();
+    this.aiToolDetector = new AIToolDetector({
+      enabled: aiToolConfig?.enabled ?? true,
+      scanProcesses: aiToolConfig?.scanProcesses ?? false,
+      watchTerminal: aiToolConfig?.watchTerminal ?? false,
+      readToolConfigs: aiToolConfig?.readToolConfigs ?? false,
+    });
     this.changeClassifier = new ChangeAttributionClassifier();
+  }
+
+  /**
+   * Update AI tool detection config at runtime.
+   */
+  setAiToolDetectionConfig(config: {
+    enabled?: boolean;
+    scanProcesses?: boolean;
+    watchTerminal?: boolean;
+    readToolConfigs?: boolean;
+  }): void {
+    this.aiToolDetector.updateConfig(config);
   }
 
   /**
@@ -183,6 +208,10 @@ export class UnifiedAITracker extends BaseTracker {
   async initialize(): Promise<void> {
     try {
       this.log('Initializing Unified AI Tracker...');
+
+      // Attribute AI edits to a specific tool/model while the agent runs.
+      // Runs on a background timer; see AIToolDetector.
+      this.aiToolDetector.startProcessWatcher();
 
       // BUG #2 FIX: Load persisted baselines first (survives VS Code reload)
       this.loadPersistedBaselines();
@@ -974,6 +1003,11 @@ export class UnifiedAITracker extends BaseTracker {
     // and should be categorized as Chat/Paste Mode, not Agent Mode
     const isAgentMode = result.method === 'external-file-change';
 
+    // Offline AI tool attribution (no telemetry)
+    const toolDetection = this.aiToolDetector.detectTool({
+      uri: document.uri,
+    });
+
     this.log(`[EMIT-EVENT] ${document.uri.fsPath.split('/').pop()}: +${linesOfCode} lines, -${linesRemoved} lines, ${linesChanged} total changes`);
 
     this.emitEvent({
@@ -995,7 +1029,12 @@ export class UnifiedAITracker extends BaseTracker {
         detectionMethod: result.method,
         confidence: result.confidence,
         velocity: result.metadata.velocity,
-        isAgentGenerated: true  // FIX: Mark as AI-generated
+        isAgentGenerated: true,  // FIX: Mark as AI-generated
+        aiTool: toolDetection.tool,
+        aiModel: toolDetection.model,
+        aiToolConfidence: toolDetection.confidence,
+        aiToolSource: toolDetection.source,
+        aiToolEstimated: toolDetection.estimated,
       }
     });
   }
@@ -1030,6 +1069,11 @@ export class UnifiedAITracker extends BaseTracker {
     // large-paste → file was likely open (Agent Mode for Gravity, etc.)
     const fileWasOpen = result.method === 'large-paste';
 
+    // Offline AI tool attribution (no telemetry)
+    const toolDetection = this.aiToolDetector.detectTool({
+      uri: document.uri,
+    });
+
     this.emitEvent({
       eventType: EventType.CodeGenerated,
       source: CodeSource.AI,
@@ -1050,7 +1094,12 @@ export class UnifiedAITracker extends BaseTracker {
         detectionMethod: result.method,
         confidence: result.confidence,
         isAgentMode: isAgentMode || result.method === 'large-paste',
-        isAgentGenerated: true  // FIX: Mark as AI-generated for getCodingModes
+        isAgentGenerated: true,  // FIX: Mark as AI-generated for getCodingModes
+        aiTool: toolDetection.tool,
+        aiModel: toolDetection.model,
+        aiToolConfidence: toolDetection.confidence,
+        aiToolSource: toolDetection.source,
+        aiToolEstimated: toolDetection.estimated,
       }
     });
   }
@@ -1060,6 +1109,8 @@ export class UnifiedAITracker extends BaseTracker {
       this.fileSystemWatcher.dispose();
       this.fileSystemWatcher = null;
     }
+
+    this.aiToolDetector.dispose();
 
     // Clean up debounce timers
     for (const [, data] of this.recentFileChanges) {

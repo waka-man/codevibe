@@ -52,8 +52,14 @@ export class AIDetector {
     /Generated with Claude Code/i,
     /GitHub Copilot/i,
     /Cursor AI/i,
+    /Cursor/i,
     /AI-generated/i,
-    /\[AI\]/i
+    /\[AI\]/i,
+    /opencode/i,
+    /Generated with OpenCode/i,
+    /codex/i,
+    /Generated with Codex/i,
+    /OpenAI Codex/i
   ];
 
   // Code structure patterns for Method 2

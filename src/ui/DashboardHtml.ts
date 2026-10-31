@@ -7,17 +7,17 @@ import * as vscode from "vscode";
  * @returns HTML string for the dashboard
  */
 export function getDashboardHtml(
-    webview: vscode.Webview,
-    extensionUri: vscode.Uri,
+  webview: vscode.Webview,
+  extensionUri: vscode.Uri,
 ): string {
-    const logoUri = webview.asWebviewUri(
-        vscode.Uri.joinPath(extensionUri, "resources", "codepause-icon.svg"),
-    );
-    const codiconCssUri = webview.asWebviewUri(
-        vscode.Uri.joinPath(extensionUri, "resources", "codicon.css"),
-    );
+  const logoUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(extensionUri, "resources", "codepause-icon.svg"),
+  );
+  const codiconCssUri = webview.asWebviewUri(
+    vscode.Uri.joinPath(extensionUri, "resources", "codicon.css"),
+  );
 
-    return `<!DOCTYPE html>
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -111,17 +111,20 @@ export function getDashboardHtml(
         .actions {
             display: flex;
             flex-wrap: wrap;
-            gap: 12px;
+            gap: 10px;
             margin: 0 0 12px 0;
             padding: 12px;
             background-color: var(--vscode-sideBar-background);
             border-radius: 6px;
             border: 1px solid var(--vscode-panel-border);
+            align-items: center;
         }
 
         .action-group {
             display: flex;
             gap: 6px;
+            flex-wrap: wrap;
+            align-items: center;
             padding-right: 12px;
             border-right: 1px solid var(--vscode-panel-border);
         }
@@ -129,6 +132,54 @@ export function getDashboardHtml(
         .action-group:last-child {
             border-right: none;
             padding-right: 0;
+        }
+
+        .actions button {
+            padding: 6px 12px;
+            font-size: 11px;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 1px solid var(--vscode-button-border, transparent);
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            white-space: nowrap;
+            flex-shrink: 1;
+            min-width: 0;
+        }
+
+        .actions button:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+
+        @media (max-width: 520px) {
+            .actions {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 8px;
+            }
+
+            .action-group {
+                flex-direction: column;
+                align-items: stretch;
+                border-right: none;
+                padding-right: 0;
+                border-bottom: 1px solid var(--vscode-panel-border);
+                padding-bottom: 8px;
+                margin-bottom: 8px;
+            }
+
+            .action-group:last-child {
+                border-bottom: none;
+                margin-bottom: 0;
+                padding-bottom: 0;
+            }
+
+            .actions button {
+                width: 100%;
+                justify-content: center;
+                text-align: center;
+                white-space: normal;
+            }
         }
 
         .auto-refresh-status {
@@ -1805,7 +1856,57 @@ export function getDashboardHtml(
             background: #F48771;
         }
 
-        /* Action buttons */
+        /* Integrity lock overlay */
+        .integrity-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 24px;
+            color: var(--vscode-foreground);
+        }
+
+        .integrity-overlay .lock-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        .integrity-overlay .lock-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .integrity-overlay .lock-message {
+            font-size: 13px;
+            color: var(--vscode-descriptionForeground);
+            max-width: 400px;
+            margin-bottom: 16px;
+        }
+
+        .integrity-overlay .lock-spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid var(--vscode-panel-border);
+            border-top-color: var(--vscode-button-background);
+            border-radius: 50%;
+            animation: integrity-spin 1s linear infinite;
+            margin-top: 8px;
+        }
+
+        @keyframes integrity-spin {
+            to { transform: rotate(360deg); }
+        }
         .file-node-actions {
             display: flex;
             gap: 6px;
@@ -2074,6 +2175,10 @@ export function getDashboardHtml(
                 <span class="icon">⏸</span>
                 Pause Alerts
             </button>
+            <button onclick="checkForUpdates()">
+                <span class="icon">⇩</span>
+                Check for Updates
+            </button>
         </div>
     </div>
 
@@ -2162,6 +2267,10 @@ export function getDashboardHtml(
 
         function snooze() {
             vscode.postMessage({ type: 'snooze' });
+        }
+
+        function checkForUpdates() {
+            vscode.postMessage({ type: 'checkForUpdates' });
         }
 
         /**
@@ -2309,6 +2418,12 @@ export function getDashboardHtml(
                 case 'error':
                     showError(message.message);
                     isRefreshing = false;
+                    break;
+                case 'integrityLock':
+                    showIntegrityLock(message.message);
+                    break;
+                case 'integrityUnlock':
+                    hideIntegrityLock();
                     break;
             }
         });
@@ -2859,7 +2974,22 @@ export function getDashboardHtml(
                                     \` : ''}
                                 </div>
                             </div>
-                            \` : ''}
+                        \` : ''}
+                        <!-- AI Tool Attribution (offline detection) -->
+                        \${data.toolAttribution && data.toolAttribution.length > 0 ? \`
+                            <div style="margin-bottom: 16px;">
+                                <div style="font-weight: 600; margin-bottom: 8px; color: var(--vscode-foreground); display: flex; align-items: center; gap: 6px;">
+                                    <span>🤖</span>
+                                    <span>AI Tool Attribution</span>
+                                </div>
+                                <div style="border: 1px solid var(--vscode-panel-border); border-radius: 4px; overflow: hidden;">
+                                    \${renderToolAttribution(data.toolAttribution)}
+                                </div>
+                                <div style="font-size: 10px; color: var(--vscode-descriptionForeground); margin-top: 6px;">
+                                    ℹ️ Model names are estimated from local evidence (commit messages, tool configs) where available; otherwise the tool's default model is shown. No data leaves your machine.
+                                </div>
+                            </div>
+                        \` : ''}
                         </div>
                     </div>
                 \`;
@@ -3353,10 +3483,31 @@ export function getDashboardHtml(
             const names = {
                 'copilot': 'GitHub Copilot',
                 'cursor': 'Cursor AI',
-                'claude-code': 'Claude Code'
+                'claude-code': 'Claude Code',
+                'opencode': 'OpenCode',
+                'codex': 'OpenAI Codex',
+                'continue': 'Continue',
+                'codeium': 'Codeium',
             };
             // Return known tool name or escape unknown tool name for security
             return names[tool] || escapeHtml(String(tool));
+        }
+
+        function renderToolAttribution(attribution) {
+            const items = attribution.map((attr, index) => {
+                const isLast = index === attribution.length - 1;
+                const border = isLast ? '' : 'border-bottom: 1px solid var(--vscode-panel-border);';
+                const modelText = attr.model ? ' (' + attr.model + (attr.modelEstimated ? ' · estimated' : '') + ')' : ' (model unknown)';
+                const statusText = attr.modelEstimated ? 'estimated' : 'detected';
+                return '<div style="padding: 10px 14px; ' + border + ' background: var(--vscode-editor-background); display: flex; justify-content: space-between; align-items: center;">' +
+                    '<div style="flex: 1;">' +
+                    '<div style="font-weight: 500; color: var(--vscode-foreground); margin-bottom: 2px;">' + escapeHtml(attr.displayName) + escapeHtml(modelText) + '</div>' +
+                    '<div style="font-size: 11px; color: var(--vscode-descriptionForeground);">' + attr.events + ' event(s) · ' + attr.lines + ' AI line(s)</div>' +
+                    '</div>' +
+                    '<div style="text-align: right; font-size: 11px; font-weight: 500; color: var(--vscode-descriptionForeground);">' + statusText + '</div>' +
+                    '</div>';
+            }).join('');
+            return items;
         }
 
         function getToolIcon(tool) {
@@ -3844,6 +3995,26 @@ export function getDashboardHtml(
                 dropdown.classList.remove('show');
             }
         });
+
+        function showIntegrityLock(message) {
+            // Remove any existing overlay
+            hideIntegrityLock();
+            const overlay = document.createElement('div');
+            overlay.id = 'integrityOverlay';
+            overlay.className = 'integrity-overlay';
+            overlay.innerHTML = \`
+                <div class="lock-icon">🔒</div>
+                <div class="lock-title">Extension Not Authentic</div>
+                <div class="lock-message">\${escapeHtml(message || 'CodeVibe is not authentic. Reinstalling the verified version...')}</div>
+                <div class="lock-spinner"></div>
+            \`;
+            document.body.appendChild(overlay);
+        }
+
+        function hideIntegrityLock() {
+            const existing = document.getElementById('integrityOverlay');
+            if (existing) existing.remove();
+        }
 
         function showError(message) {
             const content = document.getElementById('content');
