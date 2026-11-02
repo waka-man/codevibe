@@ -36,6 +36,17 @@ export class UnifiedAITracker extends BaseTracker {
   private recentEditorDeletions: Map<string, { timestamp: number; characters: number }> = new Map();
   private readonly UNDO_REDO_WINDOW_MS = 2000;
 
+  // Track recent deletions across ALL files to detect cut-and-paste
+  // refactoring (code moved between files is human-authored, not AI).
+  // Keyed by a global counter; entries expire after REFACTORING_WINDOW_MS.
+  private recentDeletions: Array<{
+    timestamp: number;
+    characters: number;
+    filePath: string;
+  }> = [];
+  private readonly REFACTORING_WINDOW_MS = 5000;
+  private readonly REFACTORING_SIZE_TOLERANCE = 0.4; // 40% size tolerance for match
+
   // Track baseline line counts per file (established when file is opened)
   // This baseline stays CONSTANT while the file is being tracked for AI modifications
   private fileBaselines: Map<string, number> = new Map();
@@ -457,6 +468,8 @@ export class UnifiedAITracker extends BaseTracker {
             timestamp,
             characters: totalRangeLength,
           });
+          // Record globally for cross-file refactoring detection
+          this.recordRecentDeletion(totalRangeLength, filePath, timestamp);
         }
         const linesRemoved = Math.ceil(totalRangeLength / 40);
         this.emitEvent({
@@ -549,6 +562,34 @@ export class UnifiedAITracker extends BaseTracker {
 
     // Emit event if HIGH confidence AI detection
     if (result.isAI && result.confidence === 'high') {
+      // Large paste may be legitimate cut-and-paste refactoring, not AI.
+      // Check if this paste matches a recent deletion in another file.
+      if (
+        result.method === 'large-paste' &&
+        this.isLikelyRefactoring(totalTextLength, filePath, timestamp)
+      ) {
+        this.log(
+          `[TEXT-CHANGE] ${fileName}: Large paste matches recent deletion - classifying as refactoring (not AI)`,
+        );
+        const lines = this.countLines(combinedText);
+        this.emitEvent({
+          eventType: EventType.CodeGenerated,
+          source: CodeSource.Neutral,
+          timestamp,
+          linesOfCode: lines,
+          linesChanged: lines,
+          charactersCount: combinedText.length,
+          filePath,
+          language: event.document.languageId,
+          detectionMethod: 'editor-refactoring',
+          confidence: 'high',
+          metadata: {
+            editorAssisted: true,
+            reason: 'Code moved between files (cut and paste refactoring)',
+          },
+        });
+        return;
+      }
       this.log(`[TEXT-CHANGE] ${fileName}: ✓ AI detected (high confidence)`);
       this.emitAIEvent(result, event.document);
     }
@@ -559,6 +600,48 @@ export class UnifiedAITracker extends BaseTracker {
     } else {
       this.log(`[TEXT-CHANGE] ${fileName}: ✗ Not AI (confidence: ${result.confidence})`);
     }
+  }
+
+  /**
+   * Record a deletion for cross-file refactoring detection.
+   * Entries older than REFACTORING_WINDOW_MS are pruned.
+   */
+  private recordRecentDeletion(
+    characters: number,
+    filePath: string,
+    timestamp: number,
+  ): void {
+    this.recentDeletions.push({ timestamp, characters, filePath });
+    const cutoff = timestamp - this.REFACTORING_WINDOW_MS;
+    this.recentDeletions = this.recentDeletions.filter(
+      (d) => d.timestamp > cutoff,
+    );
+  }
+
+  /**
+   * Check if a large paste is likely cut-and-paste refactoring rather
+   * than AI-generated code. Returns true if a recent deletion of
+   * similar size exists in a different file.
+   */
+  private isLikelyRefactoring(
+    pasteSize: number,
+    currentFilePath: string,
+    timestamp: number,
+  ): boolean {
+    const cutoff = timestamp - this.REFACTORING_WINDOW_MS;
+    return this.recentDeletions.some((d) => {
+      // Must be a different file (cut from one, paste to another)
+      if (d.filePath === currentFilePath) {
+        return false;
+      }
+      // Must be within the time window
+      if (d.timestamp < cutoff) {
+        return false;
+      }
+      // Character counts must be within tolerance
+      const sizeRatio = Math.min(d.characters, pasteSize) / Math.max(d.characters, pasteSize);
+      return sizeRatio >= 1 - this.REFACTORING_SIZE_TOLERANCE;
+    });
   }
 
   /**

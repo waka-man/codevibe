@@ -494,6 +494,124 @@ describe('UnifiedAITracker file-system change handling', () => {
       expect(events[1].source).toBe('neutral');
       expect(events[1].detectionMethod).toBe('editor-undo-redo');
     });
+
+    it('classifies cut-and-paste refactoring between files as neutral (not AI)', async () => {
+      await tracker.initialize();
+      // First: delete a large block from file A (cut)
+      const sourceDoc = doc('/proj/src/source.ts', 'x', { isDirty: true });
+      (vscode.window as any).activeTextEditor = { document: sourceDoc };
+      mockHandlers.textChange!({
+        document: sourceDoc,
+        contentChanges: [{ text: '', rangeLength: 5000 }],
+      });
+      expect(events).toHaveLength(1);
+      expect(events[0].source).toBe('neutral');
+
+      // Clear events from the deletion
+      events.length = 0;
+
+      // Then: paste a similarly-sized block into file B (paste)
+      // Mock the AIDetector to report this as a high-confidence large paste
+      const aiDetector = (tracker as any).aiDetector as { detect: jest.Mock };
+      aiDetector.detect.mockReturnValue({
+        isAI: true,
+        confidence: 'high',
+        method: 'large-paste',
+        classification: 'flag',
+        metadata: {
+          source: 'large-paste',
+          charactersCount: 5000,
+          linesOfCode: 125,
+          timestamp: Date.now(),
+        },
+      });
+
+      const targetDoc = doc('/proj/src/target.ts', 'x'.repeat(5000));
+      (vscode.window as any).activeTextEditor = { document: targetDoc };
+      mockHandlers.textChange!({
+        document: targetDoc,
+        contentChanges: [{ text: 'x'.repeat(5000), rangeLength: 0 }],
+      });
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+
+      // Should be classified as refactoring (neutral), not AI
+      expect(events).toHaveLength(1);
+      expect(events[0].source).toBe('neutral');
+      expect(events[0].detectionMethod).toBe('editor-refactoring');
+    });
+
+    it('still flags a large paste with no recent deletion as AI', async () => {
+      await tracker.initialize();
+      // Mock the AIDetector to report a high-confidence large paste
+      const aiDetector = (tracker as any).aiDetector as { detect: jest.Mock };
+      aiDetector.detect.mockReturnValue({
+        isAI: true,
+        confidence: 'high',
+        method: 'large-paste',
+        classification: 'flag',
+        metadata: {
+          source: 'large-paste',
+          charactersCount: 5000,
+          linesOfCode: 125,
+          timestamp: Date.now(),
+        },
+      });
+
+      const document = doc('/proj/src/app.ts', 'x'.repeat(5000));
+      (vscode.window as any).activeTextEditor = { document };
+      mockHandlers.textChange!({
+        document,
+        contentChanges: [{ text: 'x'.repeat(5000), rangeLength: 0 }],
+      });
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+
+      expect(events).toHaveLength(1);
+      expect(events[0].source).toBe('ai');
+    });
+
+    it('does not treat same-file paste matching deletion as refactoring', async () => {
+      await tracker.initialize();
+      const document = doc('/proj/src/app.ts', 'x', { isDirty: true });
+      (vscode.window as any).activeTextEditor = { document };
+
+      // Delete from the same file
+      mockHandlers.textChange!({
+        document,
+        contentChanges: [{ text: '', rangeLength: 5000 }],
+      });
+      expect(events).toHaveLength(1);
+      expect(events[0].source).toBe('neutral');
+
+      events.length = 0;
+
+      // Paste back into the SAME file - should NOT be refactoring (same file)
+      const aiDetector = (tracker as any).aiDetector as { detect: jest.Mock };
+      aiDetector.detect.mockReturnValue({
+        isAI: true,
+        confidence: 'high',
+        method: 'large-paste',
+        classification: 'flag',
+        metadata: {
+          source: 'large-paste',
+          charactersCount: 5000,
+          linesOfCode: 125,
+          timestamp: Date.now(),
+        },
+      });
+
+      mockHandlers.textChange!({
+        document,
+        contentChanges: [{ text: 'x'.repeat(5000), rangeLength: 0 }],
+      });
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+
+      // Same file, so it's caught by undo/redo check first (neutral, not AI)
+      expect(events).toHaveLength(1);
+      expect(events[0].source).toBe('neutral');
+    });
   });
 
   describe('team git operations are not attributed to AI', () => {
