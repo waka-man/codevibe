@@ -18,5 +18,7 @@ describe('DashboardHtml', () => {
 
     expect(match).not.toBeNull();
     expect(() => new Function(match![1])).not.toThrow();
+    expect(html).toContain("Check for Updates");
+    expect(html).toContain("checkForUpdates()");
   });
 });

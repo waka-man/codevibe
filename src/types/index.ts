@@ -6,9 +6,26 @@
 // ==================== Core Enums ====================
 
 export enum AITool {
- Copilot = "copilot",
- Cursor = "cursor",
- ClaudeCode = "claude-code",
+  Copilot = "copilot",
+  Cursor = "cursor",
+  ClaudeCode = "claude-code",
+}
+
+export type AIToolName = AITool | 'opencode' | 'codex' | 'continue' | 'codeium' | 'unknown';
+
+export interface AIToolDetection {
+  tool: AIToolName;
+  model: string | null;
+  confidence: 'high' | 'medium' | 'low';
+  source: 'cli-process' | 'extension' | 'terminal' | 'git-marker' | 'chat-sidebar' | 'default';
+  estimated: boolean;
+}
+
+export interface AIToolDetectionConfig {
+  enabled: boolean;
+  scanProcesses: boolean;
+  watchTerminal: boolean;
+  readToolConfigs: boolean;
 }
 
 // NEW: Unified AI detection methods (moved from detection/types for cross-module use)
@@ -43,9 +60,9 @@ export enum CodeSource {
 }
 
 export enum DeveloperLevel {
- Junior = "junior",
- Mid = "mid",
- Senior = "senior",
+  Junior = "junior",
+  Mid = "mid",
+  Senior = "senior",
 }
 
 export enum AlertType {
@@ -389,11 +406,13 @@ export interface UserConfig {
  alertFrequency: AlertFrequency;
  enableGamification: boolean;
  anonymizePaths: boolean;
- trackedTools: {
-  copilot: boolean;
-  cursor: boolean;
-  claudeCode: boolean;
- };
+  integrityCheck?: boolean;
+  trackedTools: {
+    copilot: boolean;
+    cursor: boolean;
+    claudeCode: boolean;
+  };
+  aiToolDetection?: AIToolDetectionConfig;
   customThresholds?: {
    aiPercentageMax?: number;
    acceptanceRateMin?: number;

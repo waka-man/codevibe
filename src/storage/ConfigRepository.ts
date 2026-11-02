@@ -86,6 +86,7 @@ export class ConfigRepository {
       alertFrequency: AlertFrequency.Medium,
       enableGamification: false, // Disabled by default
       anonymizePaths: true,
+      integrityCheck: true,
       trackedTools: {
         copilot: true,  // Enabled by default - track most of AI tools
         cursor: true,   // Enabled by default - track most of AI tools

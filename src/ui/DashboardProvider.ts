@@ -103,6 +103,9 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
         case "snooze":
           await vscode.commands.executeCommand("codePause.snooze");
           break;
+        case "checkForUpdates":
+          await vscode.commands.executeCommand("codePause.checkForUpdates");
+          break;
         case "reviewFile":
           // ENHANCED: Open file for review
           await this.openFileForReview(data.filePath);
@@ -152,6 +155,24 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       this.refreshImmediate(forceHtmlUpdate);
       this.refreshDebounceTimer = undefined;
     }, this.REFRESH_DEBOUNCE_MS);
+  }
+
+  /**
+   * Lock the dashboard with a full-screen overlay (used by the integrity
+   * check when the extension is found to be tampered). The overlay blocks
+   * interaction until an authentic build is installed.
+   */
+  public lockDashboard(message: string): void {
+    if (!this._view) return;
+    this._view.webview.postMessage({ type: 'integrityLock', message });
+  }
+
+  /**
+   * Remove the integrity overlay once the extension is verified again.
+   */
+  public unlockDashboard(): void {
+    if (!this._view) return;
+    this._view.webview.postMessage({ type: 'integrityUnlock' });
   }
 
   // BUG #3 FIX: Immediate refresh (bypasses debouncing)
@@ -236,6 +257,9 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
 
       const toolBreakdown = await this.getToolBreakdown(today);
 
+      // Get tool/model attribution from event metadata (offline detection)
+      const toolAttribution = await this.getToolAttribution(today);
+
       // Get coding modes breakdown
       const codingModes = await this.getCodingModes(today);
 
@@ -279,6 +303,7 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
         last7Days,
         trends,
         toolBreakdown,
+        toolAttribution,
         codingModes,
         threshold,
         config,
@@ -375,6 +400,71 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
     }
 
     return breakdown;
+  }
+
+  private async getToolAttribution(date: string): Promise<Array<{
+    tool: string;
+    displayName: string;
+    model: string | null;
+    lines: number;
+    events: number;
+    modelEstimated: boolean;
+  }>> {
+    const events = await this.metricsRepository.getEventsForDateRange(date, date);
+
+    const toolMap = new Map<string, {
+      tool: string;
+      displayName: string;
+      model: string | null;
+      lines: number;
+      events: number;
+      modelEstimated: boolean;
+    }>();
+
+    const displayNames: Record<string, string> = {
+      copilot: 'GitHub Copilot',
+      cursor: 'Cursor AI',
+      'claude-code': 'Claude Code',
+      opencode: 'OpenCode',
+      codex: 'OpenAI Codex',
+      continue: 'Continue',
+      codeium: 'Codeium',
+      unknown: 'Unknown',
+    };
+
+    for (const event of events) {
+      if (event.source !== 'ai') {
+        continue;
+      }
+
+      const metadata = event.metadata as Record<string, unknown> | undefined;
+      const tool = (metadata?.aiTool as string) || event.tool || 'unknown';
+      const model = (metadata?.aiModel as string | null) ?? null;
+      const modelEstimated = (metadata?.aiToolEstimated as boolean) ?? true;
+      const lines = (event.linesOfCode || 0) + (event.linesRemoved || 0);
+
+      const existing = toolMap.get(tool);
+      if (existing) {
+        existing.lines += lines;
+        existing.events += 1;
+        // Prefer a non-null, non-estimated model
+        if (model && (!existing.model || existing.modelEstimated)) {
+          existing.model = model;
+          existing.modelEstimated = modelEstimated;
+        }
+      } else {
+        toolMap.set(tool, {
+          tool,
+          displayName: displayNames[tool] || tool,
+          model,
+          lines,
+          events: 1,
+          modelEstimated,
+        });
+      }
+    }
+
+    return Array.from(toolMap.values()).sort((a, b) => b.lines - a.lines);
   }
 
   private async getCodingModes(date: string) {
