@@ -27,11 +27,17 @@ const Roboto = require("pdfmake/fonts/Roboto") as {
 };
 
 pdfmake.addFonts(Roboto as never);
-// Defense in depth: the generated PDF may never fetch external resources or
-// touch the local filesystem. Any external content in a docDefinition means
-// the build is misconfigured, and we fail closed.
+// pdfmake loads fonts from disk, so the local-access policy must permit
+// exactly the Roboto files shipped next to the bundle (out/Roboto/). This
+// grants nothing else on the filesystem.
+pdfmake.setLocalAccessPolicy((p: string) => {
+  const norm = (p ?? '').replace(/\\/g, '/');
+  const marker = norm.lastIndexOf('/out/Roboto/');
+  if (marker === -1) return false;
+  const sub = norm.slice(marker + '/out/Roboto/'.length);
+  return /^Roboto-(Regular|Medium|Italic|MediumItalic)\.ttf$/.test(sub);
+});
 pdfmake.setUrlAccessPolicy(() => false);
-pdfmake.setLocalAccessPolicy(() => false);
 
 const TAGLINE = "Pause. Review. Own your code.";
 

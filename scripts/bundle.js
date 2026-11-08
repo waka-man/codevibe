@@ -31,6 +31,18 @@ for (const file of ['sql-wasm.js', 'sql-wasm.wasm']) {
   fs.copyFileSync(path.join(sqljsDist, file), path.join(outSqlJs, file));
 }
 
+// 3. Copy the Roboto TTFs next to the bundle. The bundled Roboto font
+// module resolves __dirname + "/Roboto/*.ttf" relative to the bundle file,
+// so these must live in out/Roboto/ for pdfmake to load them at runtime.
+const robotoSource = path.join(ROOT, 'node_modules', 'pdfmake', 'fonts', 'Roboto');
+const outRoboto = path.join(OUT_DIR, 'Roboto');
+fs.mkdirSync(outRoboto, { recursive: true });
+for (const file of fs.readdirSync(robotoSource)) {
+  if (file.endsWith('.ttf')) {
+    fs.copyFileSync(path.join(robotoSource, file), path.join(outRoboto, file));
+  }
+}
+
 // 3. Bundle
 const esbuild = path.join(ROOT, 'node_modules', '.bin', process.platform === 'win32' ? 'esbuild.cmd' : 'esbuild');
 const args = [

@@ -18,6 +18,11 @@ out/**
 !out/sql.js
 !out/sql.js/sql-wasm.js
 !out/sql.js/sql-wasm.wasm
+!out/Roboto
+!out/Roboto/Roboto-Regular.ttf
+!out/Roboto/Roboto-Medium.ttf
+!out/Roboto/Roboto-Italic.ttf
+!out/Roboto/Roboto-MediumItalic.ttf
 coverage/**
 test-data/**
 scripts/**
