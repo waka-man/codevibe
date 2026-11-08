@@ -15,6 +15,14 @@ No manual version bump in `package.json`, no manual tags, no manual releases.
 
 ---
 
+## 0.1.19
+
+- Fix PDF export failing in the installed extension
+
+The bundled extension could not generate assignment report PDFs: pdfmake opens the Roboto fonts from disk at PDF-generate time, but the local-access policy was set to deny all filesystem reads, so the bundled build could never load them. The PDF silently failed while the signed JSON exported fine.
+
+What changed: the local-access policy now permits reading only the four bundled Roboto TTFs under out/Roboto/. bundle.js copies node_modules/pdfmake/fonts/Roboto/*.ttf into out/Roboto/ at build time, and .vscodeignore includes them. The strict lock (integrity check) and JSON integrity are unchanged.
+
 ## 0.1.18
 
 - Assignment report PDF export
