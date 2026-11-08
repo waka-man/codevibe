@@ -15,6 +15,17 @@ No manual version bump in `package.json`, no manual tags, no manual releases.
 
 ---
 
+## 0.1.18
+
+- Assignment report PDF export
+
+Export Assignment Report now produces both a signed `.report.json` and a presentation-ready `.report.pdf`. The PDF is instructor-facing: CodeVibe-branded document with cover, assignment identity, gauge summary (AI authorship vs. limit, ownership score vs. minimum, violations count), AI authorship trend line chart over the assignment window, detailed metrics table, violations, and exclusion audit.
+PDF output is produced locally with pdfmake; no external systems or services are contacted. The `.json` remains the authoritative, integrity-checked artifact (hash unchanged); the PDF is a presentational companion only. If PDF generation fails, the JSON is still written and a warning is shown.
+
+Build changes:
+- Release VSIX now bundles via esbuild to `out/extension.js` with all runtime deps inlined (only vscode is external) + sql.js wasm shipped in `out/sql.js/`; integrity verified on the packaged build
+- VSIX is ~1.4 MB, matching the facilitator's size target
+
 ## 0.1.17
 
 - AI tool attribution, VSIX integrity, auto-updater, Windows agentic fix
