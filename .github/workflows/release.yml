@@ -62,8 +62,9 @@ jobs:
 
       - name: Nothing to release
         if: steps.release-info.outputs.should_release == 'false'
-        run: echo 'RELEASE.md already released. Exiting.'
-        exit 0
+        run: |
+          echo 'RELEASE.md already released. Exiting.'
+          exit 0
 
       - name: Bump package.json version
         if: steps.release-info.outputs.should_release == 'true'
