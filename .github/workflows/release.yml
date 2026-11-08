@@ -1,0 +1,150 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: 'npm'
+
+      - name: Determine version and changelog from RELEASE.md
+        id: release-info
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          LATEST=$(
+            grep -oE '^## [0-9]+\.[0-9]+\.[0-9]+' RELEASE.md \
+              | sed 's/^## //' \
+              | sort -V | tail -n1
+          )
+          if [ -z "$LATEST" ]; then
+            echo 'No valid "## <x.y.z>" heading found in RELEASE.md' >&2
+            exit 1
+          fi
+
+          LATEST_TAG=$(git tag --sort=-v:refname | head -n1 | sed 's/^v//')
+          echo "RELEASE.md version: $LATEST"
+          echo "Latest tag        : ${LATEST_TAG:-none}"
+
+          if [ -n "$LATEST_TAG" ] \
+            && [ "$(printf '%s\n%s\n' "$LATEST" "$LATEST_TAG" | sort -V | tail -n1)" = "$LATEST_TAG" ]; then
+            echo "RELEASE.md version is not newer than the latest tag. Nothing to release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          {
+            echo "version=$LATEST"
+            echo "should_release=true"
+            echo "tag=v$LATEST"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Nothing to release
+        if: steps.release-info.outputs.should_release == 'false'
+        run: echo 'RELEASE.md already released. Exiting.'
+        exit 0
+
+      - name: Bump package.json version
+        if: steps.release-info.outputs.should_release == 'true'
+        run: npm pkg set version="${{ steps.release-info.outputs.version }}"
+
+      - name: Install dependencies
+        if: steps.release-info.outputs.should_release == 'true'
+        run: npm ci
+
+      - name: Compile (refreshes out/.integrity)
+        if: steps.release-info.outputs.should_release == 'true'
+        run: npm run compile
+
+      - name: Run tests
+        if: steps.release-info.outputs.should_release == 'true'
+        run: npm test
+
+      - name: Package VSIX
+        if: steps.release-info.outputs.should_release == 'true'
+        run: npx @vscode/vsce package --no-dependencies
+
+      - name: Compute integrity hash
+        id: hash
+        if: steps.release-info.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VSIX="codevibe-verify-${{ steps.release-info.outputs.version }}.vsix"
+          if [ ! -f "$VSIX" ]; then
+            echo "Expected VSIX not found: $VSIX" >&2
+            ls -la
+            exit 1
+          fi
+          echo "vsix=$VSIX" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(sha256sum "$VSIX" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+
+      - name: Build release notes
+        id: notes
+        if: steps.release-info.outputs.should_release == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.release-info.outputs.version }}
+          SHA256: ${{ steps.hash.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          CHANGELOG=$(awk -v v="$VERSION" '
+            $0 == "## " v { in_section=1; next }
+            /^## / && in_section { exit }
+            in_section { print }
+          ' RELEASE.md)
+          {
+            echo "body<<EOF"
+            echo "$CHANGELOG"
+            echo ""
+            echo "Integrity: $SHA256"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit version bump
+        if: steps.release-info.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package.json
+          git commit -m "chore: release ${{ steps.release-info.outputs.version }}" || echo 'nothing to commit'
+          git pull --rebase origin main
+          git push origin main
+
+      - name: Create tag
+        if: steps.release-info.outputs.should_release == 'true'
+        shell: bash
+        run: |
+          git tag "${{ steps.release-info.outputs.tag }}"
+          git push origin "${{ steps.release-info.outputs.tag }}"
+
+      - name: Create GitHub release
+        if: steps.release-info.outputs.should_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release-info.outputs.tag }}
+          name: ${{ steps.release-info.outputs.tag }}
+          body: ${{ steps.notes.outputs.body }}
+          files: ${{ steps.hash.outputs.vsix }}
