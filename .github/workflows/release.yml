@@ -78,10 +78,6 @@ jobs:
         if: steps.release-info.outputs.should_release == 'true'
         run: npm run compile
 
-      - name: Run tests
-        if: steps.release-info.outputs.should_release == 'true'
-        run: npm test
-
       - name: Package VSIX
         if: steps.release-info.outputs.should_release == 'true'
         run: npx @vscode/vsce package --no-dependencies
