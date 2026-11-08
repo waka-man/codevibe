@@ -12,15 +12,24 @@ vsc-extension-quickstart.md
 **/MindfulCode_Implementation_Plan.md
 
 # Build/test artifacts - never ship these
-out/**/__tests__/**
-out/**/*.test.js
-out/**/*.test.js.map
+out/**
+!out/extension.js
+!out/.integrity
+!out/sql.js
+!out/sql.js/sql-wasm.js
+!out/sql.js/sql-wasm.wasm
 coverage/**
 test-data/**
 scripts/**
 # Course/institution material - not part of the extension.
 # docs/ still ships README-adjacent screenshots, so exclude by name.
+.github/workflows/**
 docs/ai-verification-instructions.md
+docs/superpowers/**
+testing/**
+ISSUE_ACTION_PLAN.md
+.pi-lens.json
+jest.config.js
 
 # Release artifacts. Without these, every vsix/tgz built in the repo root
 # gets swept into the next vsix (a 0.1.8 vsix shipped a 0.1.4 zip inside it).

@@ -271,8 +271,9 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
+    "vscode:prepublish": "npm run bundle",
     "compile": "tsc -p ./ && node scripts/compute-integrity.js",
+    "bundle": "node scripts/bundle.js",
     "compute-integrity": "node scripts/compute-integrity.js",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
@@ -285,11 +286,13 @@
     "@jest/globals": "^30.2.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^20.19.27",
+    "@types/pdfmake": "^0.3.3",
     "@types/sql.js": "^1.4.9",
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.x",
     "@typescript-eslint/parser": "^6.x",
     "@vscode/test-electron": "^2.3.0",
+    "esbuild": "^0.28.2",
     "eslint": "^8.x",
     "jest": "^30.2.0",
     "ts-jest": "^29.4.6",
@@ -297,6 +300,7 @@
   },
   "dependencies": {
     "date-fns": "^4.1.0",
+    "pdfmake": "^0.3.14",
     "sql.js": "^1.13.0"
   }
 }

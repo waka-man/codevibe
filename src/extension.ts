@@ -28,6 +28,7 @@ import { AssignmentManager } from "./assignments/AssignmentManager";
 import { PolicyEngine } from "./assignments/PolicyEngine";
 import { AssignmentReportGenerator } from "./assignments/AssignmentReportGenerator";
 import { writeAssignmentReport } from "./assignments/AssignmentReportFile";
+import { AssignmentPdfGenerator } from "./reports/AssignmentPdfGenerator";
 import { UpdateService } from "./updates/UpdateService";
 import { IntegrityService } from "./integrity/IntegrityService";
 import { execSync } from "child_process";
@@ -1518,10 +1519,21 @@ async function registerCommands(
           report,
         );
 
+      const pdfPath = target.fsPath.replace(/\.json$/i, ".pdf");
+      try {
+        const pdfBuffer = await new AssignmentPdfGenerator().generatePdfBuffer(report);
+        await vscode.workspace.fs.writeFile(vscode.Uri.file(pdfPath), pdfBuffer as unknown as Uint8Array);
+      } catch (error) {
+        console.error("Failed to generate PDF report:", error);
+        vscode.window.showWarningMessage(
+          "Assignment report exported as JSON, but the PDF could not be generated. The signed JSON is unaffected.",
+        );
+      }
+
       const shortHash = report.integrity.hash.slice(0, 12);
         vscode.window
           .showInformationMessage(
-            `Assignment report exported (integrity: ${shortHash}…). Submit this file with your assignment.`,
+            `Assignment report exported (integrity: ${shortHash}) as JSON and PDF. Submit both files with your assignment.`,
             "Show File",
           )
           .then((action) => {
