@@ -142,7 +142,7 @@ describe("DatabaseManager path anonymization", () => {
 
     const stored = await dbManager.getAllEventPaths();
     // when disabled, path stored as-is
-    expect(stored[0].file_path.replace(/\\/g, "/")).toBe(p(workspace, "src", "a.ts"));
+    expect((stored[0].file_path || "").replace(/\\/g, "/")).toBe(p(workspace, "src", "a.ts"));
 
     // Reads still work
     const events = await dbManager.getRecentEvents(10);
