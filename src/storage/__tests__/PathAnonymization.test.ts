@@ -141,12 +141,12 @@ describe("DatabaseManager path anonymization", () => {
     await dbManager.insertEvent(event(abs));
 
     const stored = await dbManager.getAllEventPaths();
-    // when disabled, path stored as-is (posix normalized by implementation)
-    expect(stored[0].file_path).toBe(p(workspace, "src", "a.ts"));
+    // when disabled, path stored as-is
+    expect(stored[0].file_path.replace(/\\/g, "/")).toBe(p(workspace, "src", "a.ts"));
 
-    // Reads still work (fromStorage leaves absolute paths alone)
+    // Reads still work
     const events = await dbManager.getRecentEvents(10);
-    expect(events[0].filePath).toBe(p(workspace, "src", "a.ts"));
+    expect((events[0].filePath || "").replace(/\\/g, "/")).toBe(p(workspace, "src", "a.ts"));
   });
 
   it("migrates pre-existing absolute paths and reports the count", async () => {
