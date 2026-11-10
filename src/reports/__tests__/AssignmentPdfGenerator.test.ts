@@ -202,15 +202,9 @@ describe('AssignmentPdfGenerator', () => {
     expect(footer.columns[1].text).toContain('Page 1 of 2');
 
     // Exercise table layout callbacks (used by pdfmake) for all tables present
-    const findTables = (obj: any, out: any[] = []): any[] => {
-      if (!obj || typeof obj !== 'object') return out;
-      if (Array.isArray(obj)) { for (const o of obj) findTables(o, out); return out; }
-      if (obj.table && obj.table.layout) out.push(obj);
-      for (const k of Object.keys(obj)) findTables(obj[k], out);
-      return out;
-    };
-    const allTables = findTables(doc.content);
-    for (const t of allTables) {
+    const content = doc.content as any[];
+    const tables = content.filter((c) => c && c.table && c.table.layout);
+    for (const t of tables) {
       expect(t.table.layout.hLineWidth(0)).toBe(0.5);
       expect(t.table.layout.vLineWidth(0)).toBe(0);
       expect(t.table.layout.hLineColor(0)).toBe('#e5e7eb');

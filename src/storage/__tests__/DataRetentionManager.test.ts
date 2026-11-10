@@ -414,4 +414,41 @@ describe('DataRetentionManager', () => {
       expect(manager).toBeDefined();
     });
   });
+
+  describe('Data range helpers', () => {
+    it('returns event count and date range info', async () => {
+      mockCountEvents.mockResolvedValue(42);
+      mockGetOldestEvent.mockResolvedValue({ timestamp: new Date('2026-01-01').getTime() });
+      mockGetNewestEvent.mockResolvedValue({ timestamp: new Date('2026-01-11').getTime() });
+
+      await expect(manager.getEventCount()).resolves.toBe(42);
+      await expect(manager.getOldestEventDate()).resolves.toEqual(new Date('2026-01-01'));
+      await expect(manager.getNewestEventDate()).resolves.toEqual(new Date('2026-01-11'));
+      const range = await manager.getDataRange();
+      expect(range.days).toBeGreaterThan(0);
+      expect(range.start).toBeInstanceOf(Date);
+      expect(range.end).toBeInstanceOf(Date);
+    });
+
+    it('handles missing oldest/newest events', async () => {
+      mockGetOldestEvent.mockResolvedValue(null);
+      mockGetNewestEvent.mockResolvedValue(null);
+      const range = await manager.getDataRange();
+      expect(range).toEqual({ start: null, end: null, days: 0 });
+    });
+
+    it('triggerManualCleanup runs cleanup and shows info', async () => {
+      const spy = jest.spyOn(manager, 'performCleanup').mockResolvedValue();
+      mockGetOldestEvent.mockResolvedValue({ timestamp: Date.now() - 86400000 });
+      mockGetNewestEvent.mockResolvedValue({ timestamp: Date.now() });
+      await manager.triggerManualCleanup();
+      expect(spy).toHaveBeenCalled();
+      expect(mockShowInformationMessage).toHaveBeenCalled();
+    });
+
+    it('purgeExcludedEvents returns defaults on error', async () => {
+      (manager as any).metricsRepo = { purgeExcludedEvents: jest.fn().mockRejectedValue(new Error('fail')) };
+      await expect(manager.purgeExcludedEvents()).resolves.toEqual({ eventsDeleted: 0, fileReviewsDeleted: 0, datesRecalculated: [] });
+    });
+  });
 });

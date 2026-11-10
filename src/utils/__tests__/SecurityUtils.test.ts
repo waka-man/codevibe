@@ -11,7 +11,8 @@ import {
   isValidMetadataSize,
   sanitizeString,
   isValidEnum,
-  isValidImportFileSize
+  isValidImportFileSize,
+  isGitRepository
 } from '../SecurityUtils';
 
 describe('SecurityUtils', () => {
@@ -297,6 +298,17 @@ describe('SecurityUtils', () => {
       const oneMB = 1024 * 1024;
       expect(isValidImportFileSize(500 * 1024, oneMB)).toBe(true);
       expect(isValidImportFileSize(2 * oneMB, oneMB)).toBe(false);
+    });
+  });
+
+  describe('isGitRepository', () => {
+    it('returns false for empty path', () => {
+      expect(isGitRepository('')).toBe(false);
+    });
+
+    it('returns true for a git repository and false for non-repo', () => {
+      expect(isGitRepository(process.cwd())).toBe(true);
+      expect(isGitRepository('/tmp')).toBe(false);
     });
   });
 
