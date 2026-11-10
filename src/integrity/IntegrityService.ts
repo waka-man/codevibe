@@ -71,7 +71,8 @@ export class IntegrityService {
   computeLocalHash(): string {
     const excludedDirs = new Set(['__tests__', 'node_modules']);
     const excludedExt = new Set(['.map']);
-    const excludedFiles = new Set(['.integrity']);
+    const excludedFiles = new Set(['.integrity', '.DS_Store']);
+    const excludedSuffixes = ['.test.js'];
 
     const files: { rel: string; full: string }[] = [];
     const walk = (dir: string) => {
@@ -84,6 +85,7 @@ export class IntegrityService {
         } else if (entry.isFile()) {
           if (excludedFiles.has(entry.name)) continue;
           if (excludedExt.has(path.extname(entry.name))) continue;
+          if (excludedSuffixes.some((s) => entry.name.endsWith(s))) continue;
           files.push({ rel, full });
         }
       }

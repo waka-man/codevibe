@@ -173,6 +173,13 @@ export class DatabaseManager implements IDatabaseManager {
 
     const SQL = await initSqlJs({
       locateFile: (file: string) => {
+        // Prefer the wasm shipped next to the bundle (out/sql.js/), which is
+        // what the packaged VSIX includes; fall back to node_modules so the
+        // dev runner can also find it.
+        const bundledPath = path.join(__dirname, "sql.js", file);
+        if (fs.existsSync(bundledPath)) {
+          return bundledPath;
+        }
         const wasmPath = path.join(
           __dirname,
           "..",

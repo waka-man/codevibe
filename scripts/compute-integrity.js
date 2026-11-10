@@ -10,8 +10,9 @@ const OUT_DIR = path.join(ROOT, 'out');
 const INTEGRITY_FILE = path.join(OUT_DIR, '.integrity');
 
 // Files never shipped in the VSIX, so they must not contribute to the hash.
-const EXCLUDED = new Set(['.integrity']);
+const EXCLUDED = new Set(['.integrity', '.DS_Store']);
 const EXCLUDED_EXT = new Set(['.map']);
+const EXCLUDED_SUFFIXES = ['.test.js'];
 // Directories that are never shipped.
 const EXCLUDED_DIRS = new Set(['__tests__', 'node_modules']);
 
@@ -25,7 +26,9 @@ function walk(dir, base) {
       result.push(...walk(full, base));
     } else if (entry.isFile()) {
       if (EXCLUDED.has(entry.name)) continue;
-      if (EXCLUDED_EXT.has(path.extname(entry.name))) continue;
+      const ext = path.extname(entry.name);
+      if (EXCLUDED_EXT.has(ext)) continue;
+      if (EXCLUDED_SUFFIXES.some((s) => entry.name.endsWith(s))) continue;
       result.push({ full, rel });
     }
   }
