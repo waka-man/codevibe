@@ -24,7 +24,7 @@ describe("DatabaseManager path anonymization", () => {
   let dbManager: DatabaseManager;
   let tempDir: string;
 
-  const workspace = "/home/testuser/projects/acme";
+  const workspace = path.resolve(__dirname, "..", "..", "..", "test-data", "anon-workspace");
   const today = new Date().toISOString().split("T")[0];
 
   const event = (filePath: string): TrackingEvent => ({
@@ -83,15 +83,15 @@ describe("DatabaseManager path anonymization", () => {
   });
 
   it("stores event paths workspace-relative, not absolute", async () => {
-    await dbManager.insertEvent(event(`${workspace}/src/auth/login.ts`));
+    await dbManager.insertEvent(event(path.join(workspace, "src", "auth", "login.ts")));
 
     const stored = await dbManager.getAllEventPaths();
-    expect(stored[0].file_path).toBe("src/auth/login.ts");
+    expect(stored[0].file_path).toBe(path.join("src", "auth", "login.ts"));
     expect(stored[0].file_path).not.toContain("testuser");
   });
 
   it("returns absolute paths when reading events back", async () => {
-    const abs = `${workspace}/src/auth/login.ts`;
+    const abs = path.join(workspace, "src", "auth", "login.ts");
     await dbManager.insertEvent(event(abs));
 
     const events = await dbManager.getRecentEvents(10);
@@ -99,18 +99,18 @@ describe("DatabaseManager path anonymization", () => {
   });
 
   it("round-trips file review status paths", async () => {
-    const abs = `${workspace}/src/a.ts`;
+    const abs = path.join(workspace, "src", "a.ts");
     await dbManager.insertOrUpdateFileReviewStatus(review(abs));
 
     const stored = await dbManager.getAllFileReviewPaths();
-    expect(stored[0].file_path).toBe("src/a.ts");
+    expect(stored[0].file_path).toBe(path.join("src", "a.ts"));
 
     const rows = await dbManager.getFileReviewsForDate(today);
     expect(rows[0].filePath).toBe(abs);
   });
 
   it("file review upsert still matches its existing row (no duplicate)", async () => {
-    const abs = `${workspace}/src/a.ts`;
+    const abs = path.join(workspace, "src", "a.ts");
     await dbManager.insertOrUpdateFileReviewStatus(review(abs));
 
     // Second write with the same absolute path must UPDATE, not INSERT a
@@ -124,7 +124,7 @@ describe("DatabaseManager path anonymization", () => {
   });
 
   it("markFileAsReviewed updates the anonymized row", async () => {
-    const abs = `${workspace}/src/a.ts`;
+    const abs = path.join(workspace, "src", "a.ts");
     await dbManager.insertOrUpdateFileReviewStatus(review(abs));
 
     await dbManager.markFileAsReviewed(abs, AITool.ClaudeCode, today, "mid", "manual", 8000);
@@ -136,7 +136,7 @@ describe("DatabaseManager path anonymization", () => {
 
   it("stores absolute paths when anonymization is disabled", async () => {
     dbManager.setAnonymizePaths(false);
-    const abs = `${workspace}/src/a.ts`;
+    const abs = path.join(workspace, "src", "a.ts");
     await dbManager.insertEvent(event(abs));
 
     const stored = await dbManager.getAllEventPaths();
@@ -151,11 +151,11 @@ describe("DatabaseManager path anonymization", () => {
     // Simulate legacy rows written before anonymization existed: insert with
     // the setting off, so the raw absolute path lands in the table.
     dbManager.setAnonymizePaths(false);
-    await dbManager.insertEvent(event(`${workspace}/src/legacy.ts`));
-    await dbManager.insertEvent(event(`${workspace}/src/legacy2.ts`));
+    await dbManager.insertEvent(event(path.join(workspace, "src", "legacy.ts")));
+    await dbManager.insertEvent(event(path.join(workspace, "src", "legacy2.ts")));
 
     const before = await dbManager.getAllEventPaths();
-    expect(before.every((r) => r.file_path!.startsWith("/"))).toBe(true);
+    expect(before.every((r) => path.isAbsolute(r.file_path!))).toBe(true);
 
     dbManager.setAnonymizePaths(true);
     const result = dbManager.migrateAnonymizeExistingPaths();
@@ -163,9 +163,9 @@ describe("DatabaseManager path anonymization", () => {
 
     const after = await dbManager.getAllEventPaths();
     expect(after.map((r) => r.file_path).sort()).toEqual([
-      "src/legacy.ts",
-      "src/legacy2.ts",
-    ]);
+      path.join("src", "legacy.ts"),
+      path.join("src", "legacy2.ts"),
+    ].sort());
 
     // And reads still resolve to absolute
     const events = await dbManager.getRecentEvents(10);
@@ -174,7 +174,7 @@ describe("DatabaseManager path anonymization", () => {
 
   it("migration is idempotent", async () => {
     dbManager.setAnonymizePaths(false);
-    await dbManager.insertEvent(event(`${workspace}/src/a.ts`));
+    await dbManager.insertEvent(event(path.join(workspace, "src", "a.ts")));
     dbManager.setAnonymizePaths(true);
 
     expect(dbManager.migrateAnonymizeExistingPaths().events).toBe(1);
@@ -182,7 +182,7 @@ describe("DatabaseManager path anonymization", () => {
   });
 
   it("migration is a no-op when disabled", async () => {
-    await dbManager.insertEvent(event(`${workspace}/src/a.ts`));
+    await dbManager.insertEvent(event(path.join(workspace, "src", "a.ts")));
     dbManager.setAnonymizePaths(false);
     expect(dbManager.migrateAnonymizeExistingPaths().events).toBe(0);
   });
