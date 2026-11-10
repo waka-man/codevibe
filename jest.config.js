@@ -24,10 +24,10 @@ module.exports = {
   //   - ExcludedPaths / PathAnonymizer gate data collection and privacy.
   coverageThreshold: {
     global: {
-      statements: 80,
-      branches: 70,
-      functions: 82,
-      lines: 80,
+      statements: 85,
+      branches: 75,
+      functions: 87,
+      lines: 85,
     },
     './src/core/FileReviewSessionTracker.ts': {
       statements: 90,
