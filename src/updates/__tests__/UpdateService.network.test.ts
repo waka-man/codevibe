@@ -115,7 +115,7 @@ describe('UpdateService default network', () => {
     await expect(service.install({
       version: '0.2.0', tagName: 'v0.2.0', name: 'R', body: '', vsixUrl: 'https://example.com/app.vsix',
     })).rejects.toThrow('VSIX download returned HTTP 404');
-    try { actualFs.unlinkSync(target); } catch {}
+    try { actualFs.unlinkSync(target); } catch { /* ignore cleanup */ }
   });
 
   it('downloadFile emits request error', async () => {
@@ -140,6 +140,6 @@ describe('UpdateService default network', () => {
     await expect(service.install({
       version: '0.2.0', tagName: 'v0.2.0', name: 'R', body: '', vsixUrl: 'https://example.com/app.vsix',
     })).rejects.toThrow('dl fail');
-    try { actualFs.unlinkSync(target); } catch {}
+    try { actualFs.unlinkSync(target); } catch { /* ignore cleanup */ }
   });
 });
