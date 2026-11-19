@@ -128,6 +128,7 @@ describe("PolicyEngine", () => {
       "manual-deletion",
       "editor-undo-redo",
       "editor-assisted-change",
+      "editor-refactoring",
     ])("classifies %s as Permitted (manual edit, not AI-authored)", (method) => {
       const event = aiEvent({
         source: CodeSource.Neutral,
@@ -530,7 +531,64 @@ describe("PolicyEngine", () => {
       expect(recomputed.violations).toEqual(metrics.violations);
     });
 
-    it("counts editor-assisted manual edits as manual lines, never as AI authorship", () => {
+    it("does not let delete/undo cycles dilute the AI authorship percentage", () => {
+      const events: TrackingEvent[] = [
+        aiEvent({
+          filePath: "/repo/src/a.ts",
+          detectionMethod: "inline-completion-api",
+          linesOfCode: 50,
+          linesChanged: 50,
+        }),
+        manualEvent({ filePath: "/repo/src/a.ts", linesChanged: 50 }),
+      ];
+      for (let i = 0; i < 10; i++) {
+        events.push(
+          aiEvent({
+            source: CodeSource.Neutral,
+            timestamp: ts("2025-01-02T10:00:00Z") + i * 2000,
+            filePath: "/repo/src/a.ts",
+            detectionMethod: "manual-deletion",
+            linesOfCode: 0,
+            linesChanged: 50,
+          }),
+          aiEvent({
+            source: CodeSource.Neutral,
+            timestamp: ts("2025-01-02T10:00:01Z") + i * 2000,
+            filePath: "/repo/src/a.ts",
+            detectionMethod: "editor-undo-redo",
+            linesOfCode: 50,
+            linesChanged: 50,
+          }),
+        );
+      }
+
+      const metrics = engine.computeMetrics(assignment, events, []);
+
+      expect(metrics.authorship.totalLines).toBe(100);
+      expect(metrics.authorship.manualLines).toBe(50);
+      expect(metrics.authorship.authorshipPercentage).toBe(50);
+    });
+
+    it("never counts cut-and-paste refactoring as AI lines", () => {
+      const events: TrackingEvent[] = [
+        manualEvent({ filePath: "/repo/src/a.ts", linesChanged: 20 }),
+        aiEvent({
+          source: CodeSource.Neutral,
+          filePath: "/repo/src/b.ts",
+          detectionMethod: "editor-refactoring",
+          linesOfCode: 80,
+          linesChanged: 80,
+        }),
+      ];
+
+      const metrics = engine.computeMetrics(assignment, events, []);
+
+      expect(metrics.authorship.flaggedAILines).toBe(0);
+      expect(metrics.authorship.authorshipPercentage).toBe(0);
+      expect(metrics.authorship.totalLines).toBe(20);
+    });
+
+    it("excludes editor-assisted edits from authorship totals, never counting them as AI", () => {
       const events: TrackingEvent[] = [
         manualEvent({
           filePath: "/repo/src/a.ts",
@@ -556,7 +614,9 @@ describe("PolicyEngine", () => {
 
       const metrics = engine.computeMetrics(assignment, events, []);
 
-      expect(metrics.authorship.manualLines).toBe(170);
+      // Neutral edits are neither AI nor manual (matches the dashboard)
+      expect(metrics.authorship.manualLines).toBe(100);
+      expect(metrics.authorship.totalLines).toBe(100);
       expect(metrics.authorship.permittedAILines).toBe(0);
       expect(metrics.authorship.flaggedAILines).toBe(0);
       expect(metrics.authorship.authorshipPercentage).toBe(0);

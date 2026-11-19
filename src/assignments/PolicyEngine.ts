@@ -22,17 +22,18 @@ import {
 } from "../types";
 
 /**
- * Detection methods that are always manual, human edits — never AI-authored.
- * They are emitted with CodeSource.Neutral (editor assistance is not proof of
+ * Detection methods that are never AI-authored. Editor-assisted ones are
+ * emitted with CodeSource.Neutral (editor assistance is not proof of
  * authorship either way), so classification must not fall through to "flag"
  * and count them as AI lines.
  */
-const MANUAL_DETECTION_METHODS = new Set([
+const NON_AI_DETECTION_METHODS = new Set([
   "manual",
   "manual-typing",
   "manual-deletion",
   "editor-undo-redo",
   "editor-assisted-change",
+  "editor-refactoring",
 ]);
 
 export interface PolicyEngineOptions {
@@ -63,7 +64,10 @@ export class PolicyEngine {
       };
     }
 
-    if (MANUAL_DETECTION_METHODS.has(method)) {
+    if (
+      event.source === CodeSource.Neutral ||
+      NON_AI_DETECTION_METHODS.has(method)
+    ) {
       return {
         classification: AIClassification.Permitted,
         reason: `${method} is a manual/editor-assisted edit, not AI-authored`,
@@ -168,14 +172,28 @@ export class PolicyEngine {
         (event.linesOfCode ?? 0) + (event.linesRemoved ?? 0);
       const isManual =
         event.source === CodeSource.Manual ||
-        (event.detectionMethod !== undefined &&
-          MANUAL_DETECTION_METHODS.has(event.detectionMethod));
+        event.detectionMethod === "manual" ||
+        event.detectionMethod === "manual-typing";
+      // Editor-assisted edits (deletions, undo/redo, Emmet, cut-and-paste
+      // refactoring) are neither AI nor manual authorship. They are excluded
+      // from the line totals, matching the dashboard (MetricsRepository skips
+      // CodeSource.Neutral). Counting them as manual would let a student lower
+      // their AI percentage by repeatedly deleting and undoing AI code.
+      const isNeutral =
+        !isManual &&
+        (event.source === CodeSource.Neutral ||
+          (event.detectionMethod !== undefined &&
+            NON_AI_DETECTION_METHODS.has(event.detectionMethod)));
 
       if (isExempt) {
         continue;
       }
 
       latestEventTime = Math.max(latestEventTime, event.timestamp);
+
+      if (isNeutral) {
+        continue;
+      }
 
       if (isManual) {
         manualLines += lines;
