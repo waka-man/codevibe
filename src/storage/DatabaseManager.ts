@@ -1654,22 +1654,33 @@ export class DatabaseManager implements IDatabaseManager {
    * with ExcludedPaths.isExcludedFile (SQL LIKE cannot do segment matching).
    */
   async getAllEventPaths(): Promise<
-    Array<{ id: number; file_path: string | null; timestamp: number }>
+    Array<{
+      id: number;
+      file_path: string | null;
+      timestamp: number;
+      assignment_id: string | null;
+    }>
   > {
     if (!this.db) {
       throw new Error("Database not initialized");
     }
 
     const stmt = this.db.prepare(
-      "SELECT id, file_path, timestamp FROM events",
+      "SELECT id, file_path, timestamp, assignment_id FROM events",
     );
-    const rows: Array<{ id: number; file_path: string | null; timestamp: number }> = [];
+    const rows: Array<{
+      id: number;
+      file_path: string | null;
+      timestamp: number;
+      assignment_id: string | null;
+    }> = [];
     while (stmt.step()) {
       rows.push(
         stmt.getAsObject() as unknown as {
           id: number;
           file_path: string | null;
           timestamp: number;
+          assignment_id: string | null;
         },
       );
     }

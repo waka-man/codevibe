@@ -57,6 +57,11 @@ export class MetricsRepository {
   }
 
   async recordEvent(event: TrackingEvent): Promise<number> {
+    // Last line of defence: generated/dependency paths (node_modules, build
+    // output, ...) are never stored, whichever code path produced the event.
+    if (event.filePath && isExcludedFile(event.filePath)) {
+      return 0;
+    }
     return await this.db.insertEvent(event);
   }
 
@@ -69,7 +74,10 @@ export class MetricsRepository {
    * metrics for every affected date so dashboard numbers recover.
    * Built-in defaults always apply; extraGlobs extends them.
    */
-  async purgeExcludedEvents(extraGlobs: string[] = []): Promise<{
+  async purgeExcludedEvents(
+    extraGlobs: string[] = [],
+    options: { preserveAssignmentEvents?: boolean } = {},
+  ): Promise<{
     eventsDeleted: number;
     fileReviewsDeleted: number;
     datesRecalculated: string[];
@@ -79,6 +87,13 @@ export class MetricsRepository {
     const events = await this.db.getAllEventPaths();
     const excludedEventIds: number[] = [];
     for (const event of events) {
+      // User-supplied globs must never erase assignment evidence: a student
+      // could otherwise add `src/**` after an assignment and purge its events.
+      if (options.preserveAssignmentEvents && event.assignment_id) {
+        if (!isExcludedFile(event.file_path)) {
+          continue;
+        }
+      }
       if (event.file_path && isExcludedFile(event.file_path, extraGlobs)) {
         excludedEventIds.push(event.id);
         affectedDates.add(
@@ -822,7 +837,8 @@ export class MetricsRepository {
    * Used by dashboard to show files that need review
    */
   async getUnreviewedFiles(date: string): Promise<any[]> {
-    return await this.db.getUnreviewedFiles(date);
+    const files = await this.db.getUnreviewedFiles(date);
+    return files.filter((file) => !isExcludedFile(file.filePath));
   }
 
   /**
@@ -850,6 +866,9 @@ export class MetricsRepository {
   }
 
   async saveFileReviewStatus(status: any): Promise<void> {
+    if (status?.filePath && isExcludedFile(status.filePath)) {
+      return;
+    }
     return await this.db.insertOrUpdateFileReviewStatus(status);
   }
 

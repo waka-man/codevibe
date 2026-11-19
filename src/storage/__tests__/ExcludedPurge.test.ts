@@ -153,6 +153,43 @@ describe("Excluded-path purge", () => {
     expect(remaining.map((e) => e.filePath)).toEqual(["/proj/src/app.ts"]);
   });
 
+  it("user globs never purge events that belong to an assignment", async () => {
+    await dbManager.insertEvent({
+      ...makeEvent("/proj/src/graded.ts", 40),
+      assignmentId: "assignment-1",
+    });
+    await dbManager.insertEvent({
+      ...makeEvent("/proj/node_modules/pkg/index.js", 100),
+      assignmentId: "assignment-1",
+    });
+    await dbManager.insertEvent(makeEvent("/proj/src/scratch.ts", 5));
+
+    const result = await metricsRepo.purgeExcludedEvents(["src/**"], {
+      preserveAssignmentEvents: true,
+    });
+
+    // scratch.ts (no assignment) and the built-in node_modules row go;
+    // the assignment's source event stays as evidence.
+    expect(result.eventsDeleted).toBe(2);
+    const remaining = await dbManager.getRecentEvents(100);
+    expect(remaining.map((e) => e.filePath)).toEqual(["/proj/src/graded.ts"]);
+  });
+
+  it("never stores or lists excluded paths via the repository (#37)", async () => {
+    const pnpmFile = "/proj/node_modules/.pnpm/vite@5/node_modules/vite/bin/vite.js";
+    await metricsRepo.recordEvent(makeEvent(pnpmFile, 90));
+    await metricsRepo.saveFileReviewStatus(makeReview(pnpmFile, 90));
+    // A row written before the guard existed must still not be listed
+    await dbManager.insertOrUpdateFileReviewStatus(
+      makeReview("/proj/.svelte-kit/generated/root.js", 30),
+    );
+    await metricsRepo.saveFileReviewStatus(makeReview("/proj/src/app.ts", 10));
+
+    expect(await dbManager.getRecentEvents(100)).toEqual([]);
+    const unreviewed = await metricsRepo.getUnreviewedFiles(today);
+    expect(unreviewed.map((f: any) => f.filePath)).toEqual(["/proj/src/app.ts"]);
+  });
+
   it("records and retrieves the exclusion audit trail", async () => {
     const now = Date.now();
     await dbManager.recordExclusionAudit(now, ["**/src/**"], "settings");
