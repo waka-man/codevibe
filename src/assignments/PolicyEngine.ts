@@ -21,6 +21,20 @@ import {
   TrackingGap,
 } from "../types";
 
+/**
+ * Detection methods that are always manual, human edits — never AI-authored.
+ * They are emitted with CodeSource.Neutral (editor assistance is not proof of
+ * authorship either way), so classification must not fall through to "flag"
+ * and count them as AI lines.
+ */
+const MANUAL_DETECTION_METHODS = new Set([
+  "manual",
+  "manual-typing",
+  "manual-deletion",
+  "editor-undo-redo",
+  "editor-assisted-change",
+]);
+
 export interface PolicyEngineOptions {
   /** Number of milliseconds of inactivity before a tracking gap is recorded */
   gapThresholdMs?: number;
@@ -46,6 +60,13 @@ export class PolicyEngine {
       return {
         classification: AIClassification.Permitted,
         reason: "No detection method recorded",
+      };
+    }
+
+    if (MANUAL_DETECTION_METHODS.has(method)) {
+      return {
+        classification: AIClassification.Permitted,
+        reason: `${method} is a manual/editor-assisted edit, not AI-authored`,
       };
     }
 
@@ -147,7 +168,8 @@ export class PolicyEngine {
         (event.linesOfCode ?? 0) + (event.linesRemoved ?? 0);
       const isManual =
         event.source === CodeSource.Manual ||
-        event.detectionMethod === "manual";
+        (event.detectionMethod !== undefined &&
+          MANUAL_DETECTION_METHODS.has(event.detectionMethod));
 
       if (isExempt) {
         continue;
@@ -320,12 +342,15 @@ export class PolicyEngine {
       );
     }
 
-    // Tracking gaps
+    // Tracking gaps. The leading gap is measured from when the assignment
+    // existed (createdAt), not the calendar-day boundary of startDate —
+    // otherwise time before the assignment existed is flagged as "no tracking".
     const trackingGaps = this.detectTrackingGaps(
       events,
       assignment.startDate,
       assignment.endDate,
       gapThresholdMs,
+      assignment.createdAt,
     );
     for (const gap of trackingGaps) {
       addViolation(
@@ -360,12 +385,16 @@ export class PolicyEngine {
     startDate: string,
     endDate: string,
     thresholdMs: number,
+    notBeforeMs?: number,
   ): TrackingGap[] {
     const gaps: TrackingGap[] = [];
     // Local day boundaries - must match DatabaseManager.getEventsForAssignment
     // and MetricsRepository.calculateDailyMetrics, or the report and the
     // dashboard disagree about which events belong to the assignment.
-    const startTime = startOfLocalDay(startDate);
+    const startTime = Math.max(
+      startOfLocalDay(startDate),
+      notBeforeMs ?? 0,
+    );
     const endTime = startOfLocalDay(addDays(endDate, 1)); // Include full end day
     const now = Date.now();
 

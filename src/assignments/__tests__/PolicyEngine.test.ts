@@ -122,6 +122,21 @@ describe("PolicyEngine", () => {
         AIClassification.Permitted,
       );
     });
+
+    it.each([
+      "manual-typing",
+      "manual-deletion",
+      "editor-undo-redo",
+      "editor-assisted-change",
+    ])("classifies %s as Permitted (manual edit, not AI-authored)", (method) => {
+      const event = aiEvent({
+        source: CodeSource.Neutral,
+        detectionMethod: method,
+      });
+      const result = engine.classifyEvent(event, policy);
+      expect(result.classification).toBe(AIClassification.Permitted);
+      expect(result.violationType).toBeUndefined();
+    });
   });
 
   describe("computeMetrics - authorship numbers", () => {
@@ -513,6 +528,48 @@ describe("PolicyEngine", () => {
       // Recomputing from the same data yields byte-identical violations.
       const recomputed = engine.computeMetrics(assignment, events, []);
       expect(recomputed.violations).toEqual(metrics.violations);
+    });
+
+    it("counts editor-assisted manual edits as manual lines, never as AI authorship", () => {
+      const events: TrackingEvent[] = [
+        manualEvent({
+          filePath: "/repo/src/a.ts",
+          linesChanged: 100,
+        }),
+        aiEvent({
+          source: CodeSource.Neutral,
+          timestamp: ts("2025-01-02T10:00:00Z"),
+          filePath: "/repo/src/b.ts",
+          detectionMethod: "manual-deletion",
+          linesOfCode: 0,
+          linesChanged: 40,
+        }),
+        aiEvent({
+          source: CodeSource.Neutral,
+          timestamp: ts("2025-01-02T11:00:00Z"),
+          filePath: "/repo/src/b.ts",
+          detectionMethod: "editor-undo-redo",
+          linesOfCode: 30,
+          linesChanged: 30,
+        }),
+      ];
+
+      const metrics = engine.computeMetrics(assignment, events, []);
+
+      expect(metrics.authorship.manualLines).toBe(170);
+      expect(metrics.authorship.permittedAILines).toBe(0);
+      expect(metrics.authorship.flaggedAILines).toBe(0);
+      expect(metrics.authorship.authorshipPercentage).toBe(0);
+      expect(
+        metrics.violations.find(
+          (v) => v.type === PolicyViolationType.AuthorshipExceeded,
+        ),
+      ).toBeUndefined();
+      expect(
+        metrics.violations.find(
+          (v) => v.type === PolicyViolationType.OwnershipBelowMinimum,
+        ),
+      ).toBeUndefined();
     });
 
     it("flags UnreviewedLargePaste only when review time is below the minimum", () => {
