@@ -13,12 +13,16 @@ import { AIDetector } from '../detection/AIDetector';
 import { AIToolDetector } from '../detection/AIToolDetector';
 import { EventType, CodeSource, AIClassification } from '../types';
 import { isExcludedFile, isPackageManagerManifestFile } from '../utils/ExcludedPaths';
+import { ScaffoldActivityTracker } from '../detection/ScaffoldCommandDetector';
 import { ChangeAttributionClassifier } from '../detection/ChangeAttributionClassifier';
 import { isGitOperationActive, waitForGitIdle } from '../utils/GitOperationDetector';
 
 export class UnifiedAITracker extends BaseTracker {
   private aiDetector: AIDetector;
   private aiToolDetector: AIToolDetector;
+  // Project scaffolders (npx sv create, npm create vite, ...) running in the
+  // integrated terminal - their file writes are tool output, not AI.
+  private scaffoldActivity = new ScaffoldActivityTracker();
   private changeClassifier: ChangeAttributionClassifier;
   private fileSystemWatcher: vscode.FileSystemWatcher | null = null;
   private openFiles: Set<string> = new Set();
@@ -111,6 +115,20 @@ export class UnifiedAITracker extends BaseTracker {
    */
   private isExcluded(filePath: string): boolean {
     return isExcludedFile(filePath, this.customExcludedGlobs);
+  }
+
+  /** True if git ignores the (workspace-relative) path. */
+  private isGitIgnored(workspaceFolder: string, relativePath: string): boolean {
+    try {
+      const { execFileSync } = require('child_process');
+      execFileSync('git', ['check-ignore', '-q', '--', relativePath], {
+        cwd: workspaceFolder,
+        stdio: 'ignore',
+      });
+      return true; // exit 0 = ignored
+    } catch {
+      return false; // exit 1 = not ignored (or git unavailable)
+    }
   }
 
   /** Git operation check for the text-change path (no file-level git work). */
@@ -245,6 +263,7 @@ export class UnifiedAITracker extends BaseTracker {
 
       // Track open files for Method 3
       this.setupOpenFileTracking();
+      this.setupScaffoldCommandTracking();
 
       this.isActiveFlag = true;
       this.log('Unified AI Tracker ACTIVE - All 5 detection methods enabled');
@@ -300,6 +319,34 @@ export class UnifiedAITracker extends BaseTracker {
     this.disposables.push(this.fileSystemWatcher);
 
     this.log('  → Method 3: External file change detection enabled');
+  }
+
+  /**
+   * Watch integrated-terminal commands (shell integration, VS Code 1.93+) so
+   * files written by project scaffolders are not attributed to AI. Feature-
+   * detected: on older VS Code or shells without integration it is a no-op.
+   */
+  private setupScaffoldCommandTracking(): void {
+    const win = vscode.window as unknown as {
+      onDidStartTerminalShellExecution?: vscode.Event<{
+        execution: { commandLine?: { value?: string } };
+      }>;
+      onDidEndTerminalShellExecution?: vscode.Event<{ execution: unknown }>;
+    };
+    if (!win.onDidStartTerminalShellExecution || !win.onDidEndTerminalShellExecution) {
+      return;
+    }
+    this.disposables.push(
+      win.onDidStartTerminalShellExecution((e) => {
+        const command = e.execution.commandLine?.value;
+        if (this.scaffoldActivity.start(e.execution, command)) {
+          this.log(`[SCAFFOLD] Scaffolding command started: ${command}`);
+        }
+      }),
+      win.onDidEndTerminalShellExecution((e) => {
+        this.scaffoldActivity.end(e.execution);
+      }),
+    );
   }
 
   /**
@@ -871,6 +918,20 @@ export class UnifiedAITracker extends BaseTracker {
       return;
     }
 
+    // Files written while a project scaffolder runs (npx sv create, npm
+    // create vite, ng new, ...) are boilerplate from that tool, not AI.
+    if (this.scaffoldActivity.isActive()) {
+      this.log(`[PROCESS-CHANGE] SKIPPED - written by a scaffolding command: ${fileName}`);
+      try {
+        const document = await vscode.workspace.openTextDocument(uri);
+        this.fileBaselines.set(filePath, this.countLines(document.getText()));
+        this.savePersistedBaselines();
+      } catch {
+        // Best-effort baseline; worst case the next change re-baselines
+      }
+      return;
+    }
+
     // npm rewrites package.json on disk for `npm install <pkg>` / `npm
     // update` while the file is closed. That is the package manager, not AI
     // agent mode - skip the event. The baseline is still advanced so later
@@ -952,6 +1013,15 @@ export class UnifiedAITracker extends BaseTracker {
                   this.log(`[PROCESS-CHANGE] File tracked with no diff vs HEAD - git operation detected (pull/merge/etc), will skip AI detection`);
                   isGitOperation = true;
                 } catch {
+                  // Untracked AND git-ignored = generated output (dev-server
+                  // caches, build dirs, codegen). It is never part of the
+                  // submitted source, so it is not AI authorship either.
+                  if (this.isGitIgnored(workspaceFolder, relativePath)) {
+                    this.log(`[PROCESS-CHANGE] SKIPPED - git-ignored generated file: ${fileName}`);
+                    this.fileBaselines.set(filePath, currentLineCount);
+                    this.savePersistedBaselines();
+                    return;
+                  }
                   // New untracked file - use current line count
                   linesAdded = currentLineCount;
                   this.log(`[PROCESS-CHANGE] New untracked file: ${linesAdded} lines`);

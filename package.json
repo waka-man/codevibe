@@ -245,7 +245,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "Extra file globs to hard-ignore (appended to the built-in node_modules/venv/build-output ignore list). Events in these paths are never tracked."
+          "description": "Extra file globs to hard-ignore (appended to the built-in node_modules/venv/build-output ignore list). Patterns are relative to your project, one per item, e.g. `.svelte-kit`, `src/generated/**`, `*.log`. Events in these paths are never tracked, and already-recorded ones are removed. Ignored while an assignment is active."
         },
         "codePause.aiToolDetection": {
           "type": "object",

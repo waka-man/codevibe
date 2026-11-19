@@ -172,6 +172,9 @@ export class MetricsCollector implements IMetricsCollector {
       // Without this, files generated before extension reload won't be tracked for auto-review
       await this.restoreUnreviewedFileTracking();
 
+      // Drop rows under user-excluded paths recorded before the glob existed
+      await this.applyExclusionSettings();
+
       // Start periodic aggregation
       this.startAggregation();
 
@@ -615,6 +618,11 @@ export class MetricsCollector implements IMetricsCollector {
   }
 
   async recordEvent(event: TrackingEvent): Promise<void> {
+    // Same hard-ignore as handleEvent: it returns early for excluded paths,
+    // so without this check the event would still be written to storage.
+    if (event.filePath && isExcludedFile(event.filePath, this.getEffectiveExcludedGlobs())) {
+      return;
+    }
     // Process event through handleEvent for file review tracking and other logic
     this.handleEvent(event);
     // Also save to database
@@ -873,6 +881,30 @@ export class MetricsCollector implements IMetricsCollector {
 
   getPolicyEngine(): PolicyEngine {
     return this.policyEngine;
+  }
+
+  /**
+   * Re-apply `codePause.excludedGlobs` after it changes (or on startup):
+   * push the effective globs to the file watcher and drop rows already
+   * recorded under newly excluded paths, so the dashboard reflects the
+   * setting immediately. Skipped during an assignment (custom globs are
+   * locked out), and assignment-linked events are never purged by them.
+   */
+  async applyExclusionSettings(): Promise<number> {
+    const globs = this.getEffectiveExcludedGlobs();
+    this.unifiedAITracker?.setCustomExclusions(globs);
+    if (this.activeAssignment || globs.length === 0) {
+      return 0;
+    }
+    try {
+      const result = await this.metricsRepo.purgeExcludedEvents(globs, {
+        preserveAssignmentEvents: true,
+      });
+      return result.eventsDeleted + result.fileReviewsDeleted;
+    } catch (error) {
+      console.warn('[CodePause] Failed to purge newly excluded paths:', error);
+      return 0;
+    }
   }
 
   getActiveAssignment(): Assignment | null {

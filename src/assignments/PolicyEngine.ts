@@ -21,6 +21,21 @@ import {
   TrackingGap,
 } from "../types";
 
+/**
+ * Detection methods that are never AI-authored. Editor-assisted ones are
+ * emitted with CodeSource.Neutral (editor assistance is not proof of
+ * authorship either way), so classification must not fall through to "flag"
+ * and count them as AI lines.
+ */
+const NON_AI_DETECTION_METHODS = new Set([
+  "manual",
+  "manual-typing",
+  "manual-deletion",
+  "editor-undo-redo",
+  "editor-assisted-change",
+  "editor-refactoring",
+]);
+
 export interface PolicyEngineOptions {
   /** Number of milliseconds of inactivity before a tracking gap is recorded */
   gapThresholdMs?: number;
@@ -46,6 +61,16 @@ export class PolicyEngine {
       return {
         classification: AIClassification.Permitted,
         reason: "No detection method recorded",
+      };
+    }
+
+    if (
+      event.source === CodeSource.Neutral ||
+      NON_AI_DETECTION_METHODS.has(method)
+    ) {
+      return {
+        classification: AIClassification.Permitted,
+        reason: `${method} is a manual/editor-assisted edit, not AI-authored`,
       };
     }
 
@@ -147,13 +172,28 @@ export class PolicyEngine {
         (event.linesOfCode ?? 0) + (event.linesRemoved ?? 0);
       const isManual =
         event.source === CodeSource.Manual ||
-        event.detectionMethod === "manual";
+        event.detectionMethod === "manual" ||
+        event.detectionMethod === "manual-typing";
+      // Editor-assisted edits (deletions, undo/redo, Emmet, cut-and-paste
+      // refactoring) are neither AI nor manual authorship. They are excluded
+      // from the line totals, matching the dashboard (MetricsRepository skips
+      // CodeSource.Neutral). Counting them as manual would let a student lower
+      // their AI percentage by repeatedly deleting and undoing AI code.
+      const isNeutral =
+        !isManual &&
+        (event.source === CodeSource.Neutral ||
+          (event.detectionMethod !== undefined &&
+            NON_AI_DETECTION_METHODS.has(event.detectionMethod)));
 
       if (isExempt) {
         continue;
       }
 
       latestEventTime = Math.max(latestEventTime, event.timestamp);
+
+      if (isNeutral) {
+        continue;
+      }
 
       if (isManual) {
         manualLines += lines;
@@ -259,8 +299,16 @@ export class PolicyEngine {
       }
     }
 
+    // Ownership is "did you review the AI-flagged files". When nothing is
+    // flagged, or everything flagged has been reviewed, there is no unowned
+    // code — the score is 100, not 0. The score only drops below 100 when
+    // flagged files remain unreviewed.
     const ownershipScore =
-      filesWithReview > 0 ? totalReviewScore / filesWithReview : 0;
+      filesUnreviewed === 0
+        ? 100
+        : filesWithReview > 0
+          ? totalReviewScore / filesWithReview
+          : 0;
 
     const authorship: AssignmentAuthorship = {
       totalLines,
@@ -320,12 +368,15 @@ export class PolicyEngine {
       );
     }
 
-    // Tracking gaps
+    // Tracking gaps. The leading gap is measured from when the assignment
+    // existed (createdAt), not the calendar-day boundary of startDate —
+    // otherwise time before the assignment existed is flagged as "no tracking".
     const trackingGaps = this.detectTrackingGaps(
       events,
       assignment.startDate,
       assignment.endDate,
       gapThresholdMs,
+      assignment.createdAt,
     );
     for (const gap of trackingGaps) {
       addViolation(
@@ -360,12 +411,16 @@ export class PolicyEngine {
     startDate: string,
     endDate: string,
     thresholdMs: number,
+    notBeforeMs?: number,
   ): TrackingGap[] {
     const gaps: TrackingGap[] = [];
     // Local day boundaries - must match DatabaseManager.getEventsForAssignment
     // and MetricsRepository.calculateDailyMetrics, or the report and the
     // dashboard disagree about which events belong to the assignment.
-    const startTime = startOfLocalDay(startDate);
+    const startTime = Math.max(
+      startOfLocalDay(startDate),
+      notBeforeMs ?? 0,
+    );
     const endTime = startOfLocalDay(addDays(endDate, 1)); // Include full end day
     const now = Date.now();
 

@@ -122,6 +122,22 @@ describe("PolicyEngine", () => {
         AIClassification.Permitted,
       );
     });
+
+    it.each([
+      "manual-typing",
+      "manual-deletion",
+      "editor-undo-redo",
+      "editor-assisted-change",
+      "editor-refactoring",
+    ])("classifies %s as Permitted (manual edit, not AI-authored)", (method) => {
+      const event = aiEvent({
+        source: CodeSource.Neutral,
+        detectionMethod: method,
+      });
+      const result = engine.classifyEvent(event, policy);
+      expect(result.classification).toBe(AIClassification.Permitted);
+      expect(result.violationType).toBeUndefined();
+    });
   });
 
   describe("computeMetrics - authorship numbers", () => {
@@ -266,7 +282,7 @@ describe("PolicyEngine", () => {
       expect(metrics.authorship.totalLines).toBe(0);
       expect(metrics.authorship.authorshipPercentage).toBe(0);
       expect(metrics.authorship.prohibitedPercentage).toBe(0);
-      expect(metrics.ownership.score).toBe(0);
+      expect(metrics.ownership.score).toBe(100);
       expect(metrics.violations).toHaveLength(0);
     });
 
@@ -348,7 +364,7 @@ describe("PolicyEngine", () => {
       expect(metrics.ownership.averageReviewTimeMs).toBeCloseTo(4000, 5);
     });
 
-    it("averages review scores across multiple reviewed files", () => {
+    it("scores 100 when every flagged file has been reviewed", () => {
       const events = [prohibitedEvent(), pasteEvent()];
       const fileReviews = [
         {
@@ -367,7 +383,7 @@ describe("PolicyEngine", () => {
 
       const metrics = engine.computeMetrics(assignment, events, fileReviews);
 
-      expect(metrics.ownership.score).toBeCloseTo(75, 5); // (60 + 90) / 2
+      expect(metrics.ownership.score).toBe(100); // everything reviewed
       expect(metrics.ownership.filesReviewed).toBe(2);
       expect(metrics.ownership.filesUnreviewed).toBe(0);
       expect(metrics.ownership.unreviewedLines).toBe(0);
@@ -406,7 +422,7 @@ describe("PolicyEngine", () => {
       expect(
         metrics.ownership.filesReviewed + metrics.ownership.filesUnreviewed,
       ).toBe(0);
-      expect(metrics.ownership.score).toBe(0);
+      expect(metrics.ownership.score).toBe(100);
       // ...and no OwnershipBelowMinimum violation when there are no files to review
       expect(
         metrics.violations.find(
@@ -415,8 +431,17 @@ describe("PolicyEngine", () => {
       ).toBeUndefined();
     });
 
-    it("flags OwnershipBelowMinimum when review score is under the policy minimum", () => {
-      const events = [prohibitedEvent()];
+    it("flags OwnershipBelowMinimum when some AI files are unreviewed and the reviewed score is under the minimum", () => {
+      const events = [
+        prohibitedEvent(),
+        aiEvent({
+          timestamp: ts("2025-01-02T12:00:00Z"),
+          filePath: "/repo/src/unreviewed.ts",
+          detectionMethod: AIDetectionMethod.LargePaste,
+          linesOfCode: 12,
+          acceptanceTimeDelta: 10000,
+        }),
+      ];
       const fileReviews = [
         {
           filePath: "/repo/src/c.ts",
@@ -513,6 +538,107 @@ describe("PolicyEngine", () => {
       // Recomputing from the same data yields byte-identical violations.
       const recomputed = engine.computeMetrics(assignment, events, []);
       expect(recomputed.violations).toEqual(metrics.violations);
+    });
+
+    it("does not let delete/undo cycles dilute the AI authorship percentage", () => {
+      const events: TrackingEvent[] = [
+        aiEvent({
+          filePath: "/repo/src/a.ts",
+          detectionMethod: "inline-completion-api",
+          linesOfCode: 50,
+          linesChanged: 50,
+        }),
+        manualEvent({ filePath: "/repo/src/a.ts", linesChanged: 50 }),
+      ];
+      for (let i = 0; i < 10; i++) {
+        events.push(
+          aiEvent({
+            source: CodeSource.Neutral,
+            timestamp: ts("2025-01-02T10:00:00Z") + i * 2000,
+            filePath: "/repo/src/a.ts",
+            detectionMethod: "manual-deletion",
+            linesOfCode: 0,
+            linesChanged: 50,
+          }),
+          aiEvent({
+            source: CodeSource.Neutral,
+            timestamp: ts("2025-01-02T10:00:01Z") + i * 2000,
+            filePath: "/repo/src/a.ts",
+            detectionMethod: "editor-undo-redo",
+            linesOfCode: 50,
+            linesChanged: 50,
+          }),
+        );
+      }
+
+      const metrics = engine.computeMetrics(assignment, events, []);
+
+      expect(metrics.authorship.totalLines).toBe(100);
+      expect(metrics.authorship.manualLines).toBe(50);
+      expect(metrics.authorship.authorshipPercentage).toBe(50);
+    });
+
+    it("never counts cut-and-paste refactoring as AI lines", () => {
+      const events: TrackingEvent[] = [
+        manualEvent({ filePath: "/repo/src/a.ts", linesChanged: 20 }),
+        aiEvent({
+          source: CodeSource.Neutral,
+          filePath: "/repo/src/b.ts",
+          detectionMethod: "editor-refactoring",
+          linesOfCode: 80,
+          linesChanged: 80,
+        }),
+      ];
+
+      const metrics = engine.computeMetrics(assignment, events, []);
+
+      expect(metrics.authorship.flaggedAILines).toBe(0);
+      expect(metrics.authorship.authorshipPercentage).toBe(0);
+      expect(metrics.authorship.totalLines).toBe(20);
+    });
+
+    it("excludes editor-assisted edits from authorship totals, never counting them as AI", () => {
+      const events: TrackingEvent[] = [
+        manualEvent({
+          filePath: "/repo/src/a.ts",
+          linesChanged: 100,
+        }),
+        aiEvent({
+          source: CodeSource.Neutral,
+          timestamp: ts("2025-01-02T10:00:00Z"),
+          filePath: "/repo/src/b.ts",
+          detectionMethod: "manual-deletion",
+          linesOfCode: 0,
+          linesChanged: 40,
+        }),
+        aiEvent({
+          source: CodeSource.Neutral,
+          timestamp: ts("2025-01-02T11:00:00Z"),
+          filePath: "/repo/src/b.ts",
+          detectionMethod: "editor-undo-redo",
+          linesOfCode: 30,
+          linesChanged: 30,
+        }),
+      ];
+
+      const metrics = engine.computeMetrics(assignment, events, []);
+
+      // Neutral edits are neither AI nor manual (matches the dashboard)
+      expect(metrics.authorship.manualLines).toBe(100);
+      expect(metrics.authorship.totalLines).toBe(100);
+      expect(metrics.authorship.permittedAILines).toBe(0);
+      expect(metrics.authorship.flaggedAILines).toBe(0);
+      expect(metrics.authorship.authorshipPercentage).toBe(0);
+      expect(
+        metrics.violations.find(
+          (v) => v.type === PolicyViolationType.AuthorshipExceeded,
+        ),
+      ).toBeUndefined();
+      expect(
+        metrics.violations.find(
+          (v) => v.type === PolicyViolationType.OwnershipBelowMinimum,
+        ),
+      ).toBeUndefined();
     });
 
     it("flags UnreviewedLargePaste only when review time is below the minimum", () => {

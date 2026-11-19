@@ -257,7 +257,10 @@ export class ConfigManager {
       this.config = await this.configRepo.updateConfig(updates);
 
       // Notify listeners (e.g. storage layer) about privacy-relevant changes
-      if (updates.anonymizePaths !== undefined) {
+      if (
+        updates.anonymizePaths !== undefined ||
+        updates.excludedGlobs !== undefined
+      ) {
         this.onConfigApplied?.(this.getConfig());
       }
 
