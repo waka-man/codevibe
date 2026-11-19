@@ -299,8 +299,16 @@ export class PolicyEngine {
       }
     }
 
+    // Ownership is "did you review the AI-flagged files". When nothing is
+    // flagged, or everything flagged has been reviewed, there is no unowned
+    // code — the score is 100, not 0. The score only drops below 100 when
+    // flagged files remain unreviewed.
     const ownershipScore =
-      filesWithReview > 0 ? totalReviewScore / filesWithReview : 0;
+      filesUnreviewed === 0
+        ? 100
+        : filesWithReview > 0
+          ? totalReviewScore / filesWithReview
+          : 0;
 
     const authorship: AssignmentAuthorship = {
       totalLines,

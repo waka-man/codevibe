@@ -282,7 +282,7 @@ describe("PolicyEngine", () => {
       expect(metrics.authorship.totalLines).toBe(0);
       expect(metrics.authorship.authorshipPercentage).toBe(0);
       expect(metrics.authorship.prohibitedPercentage).toBe(0);
-      expect(metrics.ownership.score).toBe(0);
+      expect(metrics.ownership.score).toBe(100);
       expect(metrics.violations).toHaveLength(0);
     });
 
@@ -364,7 +364,7 @@ describe("PolicyEngine", () => {
       expect(metrics.ownership.averageReviewTimeMs).toBeCloseTo(4000, 5);
     });
 
-    it("averages review scores across multiple reviewed files", () => {
+    it("scores 100 when every flagged file has been reviewed", () => {
       const events = [prohibitedEvent(), pasteEvent()];
       const fileReviews = [
         {
@@ -383,7 +383,7 @@ describe("PolicyEngine", () => {
 
       const metrics = engine.computeMetrics(assignment, events, fileReviews);
 
-      expect(metrics.ownership.score).toBeCloseTo(75, 5); // (60 + 90) / 2
+      expect(metrics.ownership.score).toBe(100); // everything reviewed
       expect(metrics.ownership.filesReviewed).toBe(2);
       expect(metrics.ownership.filesUnreviewed).toBe(0);
       expect(metrics.ownership.unreviewedLines).toBe(0);
@@ -422,7 +422,7 @@ describe("PolicyEngine", () => {
       expect(
         metrics.ownership.filesReviewed + metrics.ownership.filesUnreviewed,
       ).toBe(0);
-      expect(metrics.ownership.score).toBe(0);
+      expect(metrics.ownership.score).toBe(100);
       // ...and no OwnershipBelowMinimum violation when there are no files to review
       expect(
         metrics.violations.find(
@@ -431,8 +431,17 @@ describe("PolicyEngine", () => {
       ).toBeUndefined();
     });
 
-    it("flags OwnershipBelowMinimum when review score is under the policy minimum", () => {
-      const events = [prohibitedEvent()];
+    it("flags OwnershipBelowMinimum when some AI files are unreviewed and the reviewed score is under the minimum", () => {
+      const events = [
+        prohibitedEvent(),
+        aiEvent({
+          timestamp: ts("2025-01-02T12:00:00Z"),
+          filePath: "/repo/src/unreviewed.ts",
+          detectionMethod: AIDetectionMethod.LargePaste,
+          linesOfCode: 12,
+          acceptanceTimeDelta: 10000,
+        }),
+      ];
       const fileReviews = [
         {
           filePath: "/repo/src/c.ts",
