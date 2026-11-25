@@ -104,10 +104,11 @@ describe('agentic file change detection (real git repo)', () => {
     fs.rmSync(repo, { recursive: true, force: true });
   });
 
-  async function fire(fileName: string): Promise<void> {
+  async function fire(fileName: string, newlyCreated = false): Promise<void> {
     await (tracker as any).processFileChange(
       { fsPath: path.join(repo, fileName), scheme: 'file' },
       path.join(repo, fileName),
+      newlyCreated,
     );
   }
 
@@ -136,6 +137,206 @@ describe('agentic file change detection (real git repo)', () => {
       'b.ts',
       'c.ts',
     ]);
+  });
+
+  it('does not flag a committed file moved into a new folder (#40)', async () => {
+    const original = path.join(repo, 'tracked.ts');
+    fs.writeFileSync(original, code(30, 'moved'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm moved-file', { cwd: repo });
+
+    const destinationDir = path.join(repo, 'public');
+    fs.mkdirSync(destinationDir);
+    fs.renameSync(original, path.join(destinationDir, 'tracked.ts'));
+
+    await fire(path.join('public', 'tracked.ts'), true);
+
+    expect(events).toHaveLength(0);
+  });
+
+  it('does not flag a staged Git move alongside ordinary staged changes', async () => {
+    const original = path.join(repo, 'tracked.ts');
+    fs.writeFileSync(original, code(30, 'moved'));
+    fs.writeFileSync(path.join(repo, 'README.md'), 'before\n');
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm moved-file', { cwd: repo });
+
+    fs.writeFileSync(path.join(repo, 'README.md'), 'after\n');
+    execSync('git add README.md', { cwd: repo });
+    const destinationDir = path.join(repo, 'public');
+    fs.mkdirSync(destinationDir);
+    execSync(`git mv tracked.ts ${path.join('public', 'tracked.ts')}`, { cwd: repo });
+
+    await fire(path.join('public', 'tracked.ts'), true);
+
+    expect(events).toHaveLength(0);
+  });
+
+  it('does not flag a staged basename-changing Git move', async () => {
+    const original = path.join(repo, 'old.ts');
+    fs.writeFileSync(original, code(30, 'moved'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm moved-file', { cwd: repo });
+
+    execSync('git mv old.ts renamed.ts', { cwd: repo });
+
+    await fire('renamed.ts', true);
+
+    expect(events).toHaveLength(0);
+  });
+
+  it('handles bulk staged moves with unique content', async () => {
+    const sources: string[] = [];
+    for (let i = 0; i < 250; i++) {
+      const source = path.join(repo, `file-${i}.ts`);
+      fs.writeFileSync(source, code(3, `file${i}`));
+      sources.push(source);
+    }
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm bulk-staged-moves', { cwd: repo });
+
+    const destinationDir = path.join(repo, 'moved');
+    fs.mkdirSync(destinationDir);
+    for (const source of sources) {
+      fs.renameSync(source, path.join(destinationDir, path.basename(source)));
+    }
+    execSync('git add -A', { cwd: repo });
+
+    await fire(path.join('moved', 'file-249.ts'), true);
+
+    expect(events).toHaveLength(0);
+  });
+
+  it('does not treat git rm --cached plus an identical staged file as a move', async () => {
+    const sourceDir = path.join(repo, 'lib');
+    fs.mkdirSync(sourceDir);
+    fs.writeFileSync(path.join(sourceDir, 'same.ts'), code(30, 'same'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm same-name-source', { cwd: repo });
+
+    execSync('git rm --cached lib/same.ts', { cwd: repo });
+    fs.writeFileSync(path.join(repo, 'same.ts'), code(30, 'same'));
+    execSync('git add same.ts', { cwd: repo });
+
+    await fire('same.ts', true);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].detectionMethod).toBe('external-file-change');
+  });
+
+  it('detects a pure move when the workspace is a repository subdirectory', async () => {
+    const workspace = path.join(repo, 'sub');
+    fs.mkdirSync(workspace);
+    const original = path.join(workspace, 'tracked.ts');
+    fs.writeFileSync(original, code(30, 'moved'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm moved-file', { cwd: repo });
+
+    const destinationDir = path.join(workspace, 'public');
+    fs.mkdirSync(destinationDir);
+    const destination = path.join(destinationDir, 'tracked.ts');
+    fs.renameSync(original, destination);
+    (tracker as any).fileBaselines.set(original, 30);
+    (tracker as any).cumulativeAILines.set(original, 5);
+
+    const vscode = require('vscode');
+    vscode.workspace.workspaceFolders = [{ uri: { fsPath: workspace }, name: 'sub' }];
+    vscode.workspace.getWorkspaceFolder = () => ({ uri: { fsPath: workspace }, name: 'sub' });
+    await (tracker as any).processFileChange(
+      { fsPath: destination, scheme: 'file' },
+      destination,
+      true,
+    );
+
+    expect(events).toHaveLength(0);
+    expect((tracker as any).fileBaselines.has(original)).toBe(false);
+    expect((tracker as any).cumulativeAILines.has(original)).toBe(false);
+    expect((tracker as any).fileBaselines.get(destination)).toBe(30);
+  });
+
+  it('handles pure moves with spaces in the file path', async () => {
+    const original = path.join(repo, 'my file.ts');
+    fs.writeFileSync(original, code(30, 'moved'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm moved-file', { cwd: repo });
+
+    const destinationDir = path.join(repo, 'public assets');
+    fs.mkdirSync(destinationDir);
+    fs.renameSync(original, path.join(destinationDir, 'my file.ts'));
+
+    await fire(path.join('public assets', 'my file.ts'), true);
+
+    expect(events).toHaveLength(0);
+  });
+
+  it('does not treat identical content as a move when the tracked source still exists', async () => {
+    const sourceDir = path.join(repo, 'lib');
+    fs.mkdirSync(sourceDir);
+    fs.writeFileSync(path.join(sourceDir, 'same.ts'), code(30, 'same'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm same-name-source', { cwd: repo });
+
+    fs.writeFileSync(path.join(repo, 'same.ts'), code(30, 'same'));
+
+    await fire('same.ts', true);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].detectionMethod).toBe('external-file-change');
+  });
+
+  it('handles large same-basename deletion sets without exceeding argv limits', async () => {
+    const sources: string[] = [];
+    for (let i = 0; i < 250; i++) {
+      const dir = path.join(repo, `dir-${i}`);
+      fs.mkdirSync(dir);
+      const source = path.join(dir, 'same.ts');
+      fs.writeFileSync(source, code(5, 'same'));
+      sources.push(source);
+    }
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm bulk-sources', { cwd: repo });
+
+    for (const source of sources) {
+      fs.rmSync(source);
+    }
+    fs.writeFileSync(path.join(repo, 'same.ts'), code(5, 'same'));
+
+    await fire('same.ts', true);
+
+    expect(events).toHaveLength(0);
+  });
+
+  it('does not treat identical content with a different basename as a move', async () => {
+    const original = path.join(repo, 'seed.txt');
+    fs.writeFileSync(original, code(30, 'seed'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm seed', { cwd: repo });
+
+    fs.rmSync(original);
+    fs.writeFileSync(path.join(repo, 'src.ts'), code(30, 'seed'));
+
+    await fire('src.ts', true);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].detectionMethod).toBe('external-file-change');
+  });
+
+  it('still flags a moved file when its content changed after the move', async () => {
+    const original = path.join(repo, 'tracked.ts');
+    fs.writeFileSync(original, code(10, 'moved'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm moved-file', { cwd: repo });
+
+    const destinationDir = path.join(repo, 'public');
+    fs.mkdirSync(destinationDir);
+    const destination = path.join(destinationDir, 'tracked.ts');
+    fs.renameSync(original, destination);
+    fs.appendFileSync(destination, code(5, 'agent'));
+
+    await fire(path.join('public', 'tracked.ts'), true);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].detectionMethod).toBe('external-file-change');
   });
 
   it('flags an existing tracked file that an agent appended to', async () => {

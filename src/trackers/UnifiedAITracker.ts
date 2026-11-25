@@ -16,6 +16,7 @@ import { isExcludedFile, isPackageManagerManifestFile } from '../utils/ExcludedP
 import { ScaffoldActivityTracker } from '../detection/ScaffoldCommandDetector';
 import { ChangeAttributionClassifier } from '../detection/ChangeAttributionClassifier';
 import { isGitOperationActive, waitForGitIdle } from '../utils/GitOperationDetector';
+import { findGitMoveSource } from '../utils/GitMoveDetector';
 
 export class UnifiedAITracker extends BaseTracker {
   private aiDetector: AIDetector;
@@ -985,6 +986,24 @@ export class UnifiedAITracker extends BaseTracker {
               this.log(`[PROCESS-CHANGE] Git operation in progress or just finished (pull/checkout/merge/rebase/stash), will skip AI detection`);
               isGitOperation = true;
             } else {
+              if (newlyCreated) {
+                // A move can be unstaged (deleted source + untracked
+                // destination) or staged (rename visible only in the index).
+                // Check before the path-scoped diff, which can misread either
+                // case as a brand-new file.
+                const movedFrom = findGitMoveSource(workspaceFolder, filePath);
+                if (movedFrom !== null) {
+                  this.log(`[PROCESS-CHANGE] SKIPPED - pure Git move from ${movedFrom}: ${fileName}`);
+                  const sourcePath = movedFrom;
+                  this.fileBaselines.delete(sourcePath);
+                  this.cumulativeAILines.delete(sourcePath);
+                  this.fileBaselines.set(filePath, currentLineCount);
+                  this.cumulativeAILines.set(filePath, 0);
+                  this.savePersistedBaselines();
+                  return;
+                }
+              }
+
               const diffResult = String(execSync(`git diff HEAD --numstat -- "${relativePath}"`, {
                 cwd: workspaceFolder,
                 encoding: 'utf-8',
