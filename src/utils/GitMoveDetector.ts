@@ -84,36 +84,46 @@ export function findGitMoveSource(
       filePath,
     ]).trim();
 
-    // Staged moves are already renames in the index. Only accept R100 and
-    // verify the working file still matches the staged destination blob, so
-    // an unstaged edit after `git mv` is not hidden. With -z, ordinary records
-    // are [status, path] while rename/copy records are [status, old, new].
-    const stagedChanges = git(workspaceFolder, [
-      'diff',
-      '--cached',
-      '--name-status',
-      '-M',
-      '-z',
-      'HEAD',
-      '--',
-    ]).split('\0').filter(Boolean);
-    for (let i = 0; i < stagedChanges.length;) {
-      const status = stagedChanges[i++];
-      if (status.startsWith('R') || status.startsWith('C')) {
-        const sourcePath = stagedChanges[i++];
-        const stagedPath = stagedChanges[i++];
-        if (status !== 'R100' || stagedPath !== relativePath) {
+    // A staged move appears as a staged deletion plus a staged destination.
+    // Compare the working file with the index destination first, then with
+    // same-basename sources deleted from HEAD. This avoids parsing platform-
+    // specific rename-status output and still proves a content-preserving move.
+    let stagedHash: string | null = null;
+    try {
+      stagedHash = git(workspaceFolder, [
+        'rev-parse',
+        `:${relativePath}`,
+      ]).trim();
+    } catch {
+      // Destination is not staged.
+    }
+    if (stagedHash === destinationHash) {
+      const stagedDeletedPaths = git(workspaceFolder, [
+        'diff',
+        '--cached',
+        '--no-renames',
+        '--name-only',
+        '--diff-filter=D',
+        '-z',
+        'HEAD',
+        '--',
+      ]).split('\0').filter(Boolean);
+      const destinationBasename = path.posix.basename(relativePath);
+      for (const sourcePath of stagedDeletedPaths) {
+        if (path.posix.basename(sourcePath) !== destinationBasename) {
           continue;
         }
-        const stagedHash = git(workspaceFolder, [
-          'rev-parse',
-          `:${relativePath}`,
-        ]).trim();
-        if (stagedHash === destinationHash) {
-          return resolveWorkspaceSource(workspaceFolder, workspaceRepoPath, sourcePath);
+        try {
+          const sourceHash = git(workspaceFolder, [
+            'rev-parse',
+            `HEAD:${sourcePath}`,
+          ]).trim();
+          if (sourceHash === destinationHash) {
+            return resolveWorkspaceSource(workspaceFolder, workspaceRepoPath, sourcePath);
+          }
+        } catch {
+          // A staged addition may not exist in HEAD; it is not a move source.
         }
-      } else {
-        i++; // ordinary status has one path token
       }
     }
 
