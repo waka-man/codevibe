@@ -364,7 +364,7 @@ describe("PolicyEngine", () => {
       expect(metrics.ownership.averageReviewTimeMs).toBeCloseTo(4000, 5);
     });
 
-    it("scores 100 when every flagged file has been reviewed", () => {
+    it("averages review-quality scores when every flagged file has been reviewed", () => {
       const events = [prohibitedEvent(), pasteEvent()];
       const fileReviews = [
         {
@@ -383,11 +383,31 @@ describe("PolicyEngine", () => {
 
       const metrics = engine.computeMetrics(assignment, events, fileReviews);
 
-      expect(metrics.ownership.score).toBe(100); // everything reviewed
+      expect(metrics.ownership.score).toBeCloseTo(75, 5); // (60 + 90) / 2
       expect(metrics.ownership.filesReviewed).toBe(2);
       expect(metrics.ownership.filesUnreviewed).toBe(0);
       expect(metrics.ownership.unreviewedLines).toBe(0);
       expect(metrics.ownership.averageReviewTimeMs).toBeCloseTo(4000, 5); // (2000 + 6000) / 2
+    });
+
+    it("still flags low review quality when every flagged file has been reviewed", () => {
+      const events = [prohibitedEvent(), pasteEvent()];
+      const fileReviews = events.map((event) => ({
+        filePath: event.filePath,
+        tool: event.tool,
+        reviewScore: 10,
+        totalReviewTime: 1000,
+      }));
+
+      const metrics = engine.computeMetrics(assignment, events, fileReviews);
+
+      expect(metrics.ownership.score).toBe(10);
+      expect(metrics.ownership.filesUnreviewed).toBe(0);
+      const violation = metrics.violations.find(
+        (v) => v.type === PolicyViolationType.OwnershipBelowMinimum,
+      );
+      expect(violation).toBeDefined();
+      expect(violation!.details.actualScore).toBe(10);
     });
 
     it("does not match reviews recorded under a different tool", () => {

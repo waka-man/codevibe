@@ -21,7 +21,7 @@ No manual version bump in `package.json`, no manual tags, no manual releases.
 
 Editor-assisted edits (deletions, undo/redo, Emmet-style insertions, cut-and-paste between files) were classified as flagged AI lines, so purely manual work could show an inflated AI authorship percentage, an ownership score of 0.0, and spurious authorship/ownership violations.
 
-What changed: these edits are now permitted and excluded from authorship line totals (neither AI nor manual), matching the dashboard. They are deliberately not counted as manual, so deleting and undoing AI code cannot dilute the AI percentage. The leading tracking gap is now measured from when the assignment was created, so time before it existed is no longer flagged as "no tracking activity".
+What changed: these edits are now permitted and excluded from authorship line totals (neither AI nor manual), matching the dashboard. They are deliberately not counted as manual, so deleting and undoing AI code cannot dilute the AI percentage. The leading tracking gap is now measured from when the assignment was created, so time before it existed is no longer flagged as "no tracking activity". Ownership defaults to 100 only when there are no AI-flagged files to review; reviewed files still contribute their actual review-quality score.
 
 - Stop flagging tool-generated files as AI and make excluded globs work
 
