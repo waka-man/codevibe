@@ -6,6 +6,7 @@
 import * as vscode from 'vscode';
 import { AITool, ITracker, TrackingEvent } from '../types';
 import { isExcludedFile } from '../utils/ExcludedPaths';
+import { isGeneratedOutput } from '../utils/GeneratedOutputGuard';
 
 export abstract class BaseTracker implements ITracker {
   protected disposables: vscode.Disposable[] = [];
@@ -134,6 +135,11 @@ export abstract class BaseTracker implements ITracker {
     // Skip internal CodePause files
     const filePath = document.uri.fsPath;
     if (filePath && filePath.includes('codepause-baselines.json')) {
+      return false;
+    }
+
+    // CodeVibe's own exports are evidence artifacts, not source code.
+    if (filePath && isGeneratedOutput(filePath)) {
       return false;
     }
 

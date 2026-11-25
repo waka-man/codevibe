@@ -15,6 +15,7 @@ import { EventDeduplicator } from '../tracking/EventDeduplicator';
 import { AssignmentManager } from '../assignments/AssignmentManager';
 import { PolicyEngine } from '../assignments/PolicyEngine';
 import { isExcludedFile, sanitizeCustomExclusions } from '../utils/ExcludedPaths';
+import { isGeneratedOutput } from '../utils/GeneratedOutputGuard';
 import { getToday } from '../utils/DateUtils';
 import {
   TrackingEvent,
@@ -308,7 +309,11 @@ export class MetricsCollector implements IMetricsCollector {
     // outputs). Defensive layer: trackers already filter, but direct
     // recordEvent() calls and restored state must not pollute metrics.
     // During an active assignment, student custom globs are locked out.
-    if (event.filePath && isExcludedFile(event.filePath, this.getEffectiveExcludedGlobs())) {
+    if (
+      event.filePath &&
+      (isGeneratedOutput(event.filePath) ||
+        isExcludedFile(event.filePath, this.getEffectiveExcludedGlobs()))
+    ) {
       return;
     }
 
@@ -625,7 +630,11 @@ export class MetricsCollector implements IMetricsCollector {
   async recordEvent(event: TrackingEvent): Promise<void> {
     // Same hard-ignore as handleEvent: it returns early for excluded paths,
     // so without this check the event would still be written to storage.
-    if (event.filePath && isExcludedFile(event.filePath, this.getEffectiveExcludedGlobs())) {
+    if (
+      event.filePath &&
+      (isGeneratedOutput(event.filePath) ||
+        isExcludedFile(event.filePath, this.getEffectiveExcludedGlobs()))
+    ) {
       return;
     }
     // Process event through handleEvent for file review tracking and other logic
@@ -734,6 +743,9 @@ export class MetricsCollector implements IMetricsCollector {
       const unreviewedFiles = this.fileReviewSessionTracker.getUnreviewedFiles();
 
       for (const session of [...reviewedFiles, ...unreviewedFiles]) {
+        if (isGeneratedOutput(session.filePath)) {
+          continue;
+        }
         // Preserve existing database values instead of overwriting with zeros
         // Get the existing file status from the database tracker to preserve original data
         const existingStatus = this.fileReviewTracker.getFileStatus(session.filePath, today, session.tool);

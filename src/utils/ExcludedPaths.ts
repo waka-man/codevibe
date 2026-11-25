@@ -13,8 +13,6 @@
  * used from trackers, collectors, assignment policy, and tests.
  */
 
-import { isGeneratedOutput } from './GeneratedOutputGuard';
-
 /**
  * Directory names that are always excluded, matched as exact path segments
  * (case-insensitive). Covers JS/TS, Python, and common build outputs.
@@ -265,9 +263,6 @@ export function isExcludedFile(
 ): boolean {
   if (!filePath) {
     return false;
-  }
-  if (isGeneratedOutput(filePath)) {
-    return true;
   }
   if (isExcludedBySegment(filePath)) {
     return true;

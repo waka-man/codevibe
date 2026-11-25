@@ -589,6 +589,7 @@ describe('DashboardProvider', () => {
       await messageHandler!({ type: 'export' });
 
       expect(vscode.window.showErrorMessage).toHaveBeenCalledWith('Failed to export data');
+      expect(isGeneratedOutput('/export.json')).toBe(false);
     });
   });
 

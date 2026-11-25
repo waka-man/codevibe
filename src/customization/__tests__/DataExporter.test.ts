@@ -529,6 +529,7 @@ describe('DataExporter', () => {
       await dataExporter.exportAllData();
 
       expect(vscode.window.showErrorMessage).toHaveBeenCalled();
+      expect(isGeneratedOutput('/test/export.json')).toBe(false);
     });
 
     it('should export metrics successfully', async () => {

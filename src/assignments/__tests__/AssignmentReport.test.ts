@@ -186,6 +186,16 @@ describe("AssignmentReport export + integrity", () => {
       );
     });
 
+    it("rolls back output registration when writing fails", async () => {
+      const target = { fsPath: "/tmp/submission/evidence.json" };
+      const writeFile = jest.fn().mockRejectedValue(new Error("write failed"));
+
+      await expect(writeAssignmentReport(writeFile, target, report)).rejects.toThrow(
+        "write failed",
+      );
+      expect(isGeneratedOutput(target.fsPath)).toBe(false);
+    });
+
     it("produces a well-formed report matching the AssignmentReport type", () => {
       expect(report.reportVersion).toBe("1.0");
       expect(report.assignmentId).toBe("asgn-hw1-2025");

@@ -6,9 +6,14 @@ export async function writeAssignmentReport(
   target: any,
   report: AssignmentReport,
 ): Promise<void> {
-  registerGeneratedOutput(target);
-  await writeFile(
-    target,
-    Buffer.from(JSON.stringify(report, null, 2), "utf8"),
-  );
+  const rollback = registerGeneratedOutput(target);
+  try {
+    await writeFile(
+      target,
+      Buffer.from(JSON.stringify(report, null, 2), "utf8"),
+    );
+  } catch (error) {
+    rollback();
+    throw error;
+  }
 }

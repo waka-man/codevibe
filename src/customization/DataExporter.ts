@@ -45,8 +45,13 @@ export class DataExporter {
       });
 
       if (uri) {
-        registerGeneratedOutput(uri);
-        await vscode.workspace.fs.writeFile(uri, Buffer.from(json, 'utf8'));
+        const rollback = registerGeneratedOutput(uri);
+        try {
+          await vscode.workspace.fs.writeFile(uri, Buffer.from(json, 'utf8'));
+        } catch (error) {
+          rollback();
+          throw error;
+        }
         vscode.window.showInformationMessage(
           `Data exported successfully to ${uri.fsPath}`
         );
@@ -86,8 +91,13 @@ export class DataExporter {
       });
 
       if (uri) {
-        registerGeneratedOutput(uri);
-        await vscode.workspace.fs.writeFile(uri, Buffer.from(json, 'utf8'));
+        const rollback = registerGeneratedOutput(uri);
+        try {
+          await vscode.workspace.fs.writeFile(uri, Buffer.from(json, 'utf8'));
+        } catch (error) {
+          rollback();
+          throw error;
+        }
         vscode.window.showInformationMessage('Metrics exported successfully');
       }
     } catch (error) {
@@ -115,8 +125,13 @@ export class DataExporter {
       });
 
       if (uri) {
-        registerGeneratedOutput(uri);
-        await vscode.workspace.fs.writeFile(uri, Buffer.from(json, 'utf8'));
+        const rollback = registerGeneratedOutput(uri);
+        try {
+          await vscode.workspace.fs.writeFile(uri, Buffer.from(json, 'utf8'));
+        } catch (error) {
+          rollback();
+          throw error;
+        }
         vscode.window.showInformationMessage('Configuration exported successfully');
       }
     } catch (error) {
@@ -223,8 +238,13 @@ export class DataExporter {
       });
 
       if (uri) {
-        registerGeneratedOutput(uri);
-        await vscode.workspace.fs.writeFile(uri, Buffer.from(csv, 'utf8'));
+        const rollback = registerGeneratedOutput(uri);
+        try {
+          await vscode.workspace.fs.writeFile(uri, Buffer.from(csv, 'utf8'));
+        } catch (error) {
+          rollback();
+          throw error;
+        }
         vscode.window.showInformationMessage('Data exported to CSV successfully');
       }
     } catch (error) {

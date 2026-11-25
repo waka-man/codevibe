@@ -248,6 +248,13 @@ describe('UnifiedAITracker file-system change handling', () => {
       await changeTwice('/proj/my-node_modules-backup/app.ts', 20);
       expect(events).toHaveLength(1);
     });
+
+    it('does not suppress an unrelated report-like filename', async () => {
+      (vscode.workspace as any).workspaceFolders = undefined;
+      await tracker.initialize();
+      await changeTwice('/proj/audit.report.json', 20);
+      expect(events).toHaveLength(1);
+    });
   });
 
   describe('custom exclusions via setCustomExclusions', () => {
@@ -418,9 +425,10 @@ describe('UnifiedAITracker file-system change handling', () => {
       expect(events).toHaveLength(0);
     });
 
-    it('ignores report creation before opening or changing the file', async () => {
-      await tracker.initialize();
+    it('ignores a registered report before opening or changing the file', async () => {
       const reportPath = '/proj/hw1.report.json';
+      registerGeneratedOutput(reportPath);
+      await tracker.initialize();
 
       await mockHandlers.fileCreate!(uri(reportPath));
       await mockHandlers.fileChange!(uri(reportPath));
@@ -486,6 +494,46 @@ describe('UnifiedAITracker file-system change handling', () => {
 
       expect(events).toHaveLength(0);
       expect(vscode.workspace.openTextDocument).not.toHaveBeenCalled();
+    });
+
+    it('recognises inactive diff tabs through original and modified URIs', async () => {
+      const filePath = '/proj/src/app.ts';
+      (vscode.window as any).tabGroups = {
+        all: [{
+          tabs: [{
+            input: { original: uri(filePath), modified: uri(filePath) },
+          }],
+        }],
+      };
+      await tracker.initialize();
+
+      await mockHandlers.fileChange!(uri(filePath));
+      await flushDebounce();
+
+      expect(events).toHaveLength(0);
+      expect(vscode.workspace.openTextDocument).not.toHaveBeenCalled();
+    });
+
+    it('does not hide external writes behind non-file tabs', async () => {
+      const filePath = '/proj/src/app.ts';
+      (vscode.window as any).tabGroups = {
+        all: [{
+          tabs: [{
+            input: { uri: { fsPath: filePath, scheme: 'vscode-remote' } },
+          }],
+        }],
+      };
+      await tracker.initialize();
+
+      await mockHandlers.fileChange!(uri(filePath));
+      await new Promise((resolve) => setImmediate(resolve));
+      (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValue(
+        doc(filePath, Array(20).fill('x').join('\n')),
+      );
+      await mockHandlers.fileChange!(uri(filePath));
+      await flushDebounce();
+
+      expect(events).toHaveLength(1);
     });
   });
 

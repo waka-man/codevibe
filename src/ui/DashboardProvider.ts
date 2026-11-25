@@ -682,8 +682,13 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       });
 
       if (uri) {
-        registerGeneratedOutput(uri);
-        await vscode.workspace.fs.writeFile(uri, Buffer.from(json, "utf8"));
+        const rollback = registerGeneratedOutput(uri);
+        try {
+          await vscode.workspace.fs.writeFile(uri, Buffer.from(json, "utf8"));
+        } catch (error) {
+          rollback();
+          throw error;
+        }
         vscode.window.showInformationMessage(
           "Dashboard data exported successfully",
         );

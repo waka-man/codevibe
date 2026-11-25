@@ -9,6 +9,10 @@
 import { describe, it, expect, beforeEach } from "@jest/globals";
 import { PolicyEngine } from "../PolicyEngine";
 import {
+  clearGeneratedOutputs,
+  registerGeneratedOutput,
+} from "../../utils/GeneratedOutputGuard";
+import {
   AIDetectionMethod,
   AIClassification,
   AITool,
@@ -39,6 +43,7 @@ describe("PolicyEngine", () => {
   };
 
   beforeEach(() => {
+    clearGeneratedOutputs();
     engine = new PolicyEngine();
     policy = {
       maxAuthorshipPercentage: 30,
@@ -198,6 +203,25 @@ describe("PolicyEngine", () => {
       expect(metrics.authorship.manualLines).toBe(100);
       expect(metrics.authorship.prohibitedAILines).toBe(0);
       expect(metrics.authorship.authorshipPercentage).toBe(0);
+    });
+
+    it("excludes registered CodeVibe output from assignment metrics", () => {
+      const outputPath = "/repo/submission/evidence.json";
+      registerGeneratedOutput(outputPath);
+      const events: TrackingEvent[] = [
+        manualEvent({ filePath: "/repo/src/a.ts", linesChanged: 10 }),
+        aiEvent({
+          filePath: outputPath,
+          detectionMethod: AIDetectionMethod.ExternalFileChange,
+          linesOfCode: 500,
+        }),
+      ];
+
+      const metrics = engine.computeMetrics(assignment, events, []);
+
+      expect(metrics.authorship.totalLines).toBe(10);
+      expect(metrics.authorship.manualLines).toBe(10);
+      expect(metrics.authorship.prohibitedAILines).toBe(0);
     });
 
     it("skips events without a file path", () => {

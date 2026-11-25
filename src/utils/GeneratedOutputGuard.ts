@@ -1,23 +1,30 @@
 /**
  * GeneratedOutputGuard - prevents CodeVibe's own exports from being tracked
- * as user/AI source code.
+ * as user/AI source code during the current extension session.
  *
- * Exporters register the exact target before writing. Known output filenames
- * are also recognised after a reload, when the in-memory registry is empty.
+ * Exporters register the exact destination before writing and roll the
+ * registration back if the write fails. Registrations are deliberately not
+ * used by historical purge/reconciliation code: a transient runtime guard must
+ * never authorise deleting pre-existing evidence.
  */
 
 interface OutputTarget {
   fsPath?: string;
+  scheme?: string;
   toString?: () => string;
 }
 
 const registeredOutputs = new Set<string>();
 
 function normalize(value: string): string {
-  return value.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
-function targetKeys(target: OutputTarget | string): string[] {
+function targetKeys(target: OutputTarget | string | null | undefined): string[] {
+  if (!target) {
+    return [];
+  }
   if (typeof target === 'string') {
     return [normalize(target)];
   }
@@ -34,35 +41,35 @@ function targetKeys(target: OutputTarget | string): string[] {
   return keys;
 }
 
-/** Register an exact export destination before writing it. */
-export function registerGeneratedOutput(target: OutputTarget | string): void {
-  for (const key of targetKeys(target)) {
-    if (key) {
-      registeredOutputs.add(key);
+/**
+ * Register an exact export destination before writing it.
+ * Returns a rollback function for failed writes.
+ */
+export function registerGeneratedOutput(target: OutputTarget | string): () => void {
+  const keys = targetKeys(target).filter(Boolean);
+  for (const key of keys) {
+    registeredOutputs.add(key);
+  }
+  let active = true;
+  return () => {
+    if (!active) {
+      return;
     }
-  }
+    active = false;
+    for (const key of keys) {
+      registeredOutputs.delete(key);
+    }
+  };
 }
 
-/** True for registered destinations and known CodeVibe export filenames. */
-export function isGeneratedOutput(target: OutputTarget | string): boolean {
-  const keys = targetKeys(target);
-  if (keys.some((key) => registeredOutputs.has(key))) {
-    return true;
-  }
-
-  const filePath = typeof target === 'string' ? target : target.fsPath;
-  if (!filePath) {
-    return false;
-  }
-  const basename = normalize(filePath).split('/').pop() ?? '';
-  return (
-    basename.endsWith('.report.json') ||
-    /^codepause-(?:export|metrics)-.*\.json$/.test(basename) ||
-    basename === 'codepause-config.json'
-  );
+/** True only for exact destinations registered in this extension session. */
+export function isGeneratedOutput(
+  target: OutputTarget | string | null | undefined,
+): boolean {
+  return targetKeys(target).some((key) => registeredOutputs.has(key));
 }
 
-/** Clear exact registrations (extension shutdown/tests). Filename rules remain. */
+/** Clear exact registrations (extension shutdown/tests). */
 export function clearGeneratedOutputs(): void {
   registeredOutputs.clear();
 }

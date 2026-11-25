@@ -5,6 +5,7 @@
 
 import { DatabaseManager } from "./DatabaseManager";
 import { isExcludedFile } from "../utils/ExcludedPaths";
+import { isGeneratedOutput } from "../utils/GeneratedOutputGuard";
 import { matchesAnyGlob } from "../utils/globMatch";
 import {
   addDays,
@@ -62,7 +63,11 @@ export class MetricsRepository {
   ): Promise<number> {
     // Last line of defence: generated/dependency paths (node_modules, build
     // output, ...) are never stored, whichever code path produced the event.
-    if (event.filePath && isExcludedFile(event.filePath, extraGlobs)) {
+    if (
+      event.filePath &&
+      (isGeneratedOutput(event.filePath) ||
+        isExcludedFile(event.filePath, extraGlobs))
+    ) {
       return 0;
     }
     return await this.db.insertEvent(event);
@@ -892,7 +897,11 @@ export class MetricsRepository {
    */
   async getUnreviewedFiles(date: string): Promise<any[]> {
     const files = await this.db.getUnreviewedFiles(date);
-    return files.filter((file) => !isExcludedFile(file.filePath));
+    return files.filter(
+      (file) =>
+        !isGeneratedOutput(file.filePath) &&
+        !isExcludedFile(file.filePath),
+    );
   }
 
   /**
@@ -923,7 +932,11 @@ export class MetricsRepository {
     status: any,
     extraGlobs: readonly string[] = [],
   ): Promise<void> {
-    if (status?.filePath && isExcludedFile(status.filePath, extraGlobs)) {
+    if (
+      status?.filePath &&
+      (isGeneratedOutput(status.filePath) ||
+        isExcludedFile(status.filePath, extraGlobs))
+    ) {
       return;
     }
     return await this.db.insertOrUpdateFileReviewStatus(status);
