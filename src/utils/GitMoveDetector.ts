@@ -109,7 +109,7 @@ export function findGitMoveSource(
         'diff',
         '--cached',
         '--raw',
-        '--abbrev=40',
+        '--no-abbrev',
         '--no-renames',
         '--diff-filter=D',
         '-z',
