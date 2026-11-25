@@ -205,11 +205,10 @@ describe("PolicyEngine", () => {
       expect(metrics.authorship.authorshipPercentage).toBe(0);
     });
 
-    it("excludes registered CodeVibe output from assignment metrics", () => {
+    it("keeps pre-existing evidence when a path is later registered as export output", () => {
       const outputPath = "/repo/submission/evidence.json";
       registerGeneratedOutput(outputPath);
       const events: TrackingEvent[] = [
-        manualEvent({ filePath: "/repo/src/a.ts", linesChanged: 10 }),
         aiEvent({
           filePath: outputPath,
           detectionMethod: AIDetectionMethod.ExternalFileChange,
@@ -219,9 +218,8 @@ describe("PolicyEngine", () => {
 
       const metrics = engine.computeMetrics(assignment, events, []);
 
-      expect(metrics.authorship.totalLines).toBe(10);
-      expect(metrics.authorship.manualLines).toBe(10);
-      expect(metrics.authorship.prohibitedAILines).toBe(0);
+      expect(metrics.authorship.totalLines).toBe(500);
+      expect(metrics.authorship.prohibitedAILines).toBe(500);
     });
 
     it("skips events without a file path", () => {

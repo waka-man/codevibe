@@ -142,6 +142,7 @@ describe("Excluded-path purge", () => {
     expect(result.fileReviewsDeleted).toBe(0);
     expect(await dbManager.getRecentEvents(100)).toHaveLength(1);
     expect(await dbManager.getFileReviewsForDate(today)).toHaveLength(1);
+    expect(await metricsRepo.getUnreviewedFiles(today)).toHaveLength(1);
   });
 
   it("does not touch lookalike paths", async () => {

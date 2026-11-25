@@ -4,7 +4,6 @@
  */
 
 import { matchesAnyGlob } from "../utils/globMatch";
-import { isGeneratedOutput } from "../utils/GeneratedOutputGuard";
 import { addDays, startOfLocalDay } from "../utils/DateUtils";
 import {
   TrackingEvent,
@@ -163,7 +162,7 @@ export class PolicyEngine {
     let latestEventTime = 0;
 
     for (const event of events) {
-      if (!event.filePath || isGeneratedOutput(event.filePath)) {
+      if (!event.filePath) {
         continue;
       }
 
@@ -275,9 +274,6 @@ export class PolicyEngine {
 
     // Merge file reviews for ownership calculation
     for (const review of fileReviews) {
-      if (isGeneratedOutput(review.filePath)) {
-        continue;
-      }
       const key = `${review.filePath}:${review.tool}`;
       const entry = aiFiles.get(key);
       if (entry) {

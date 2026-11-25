@@ -32,6 +32,27 @@ describe('GeneratedOutputGuard', () => {
     expect(isGeneratedOutput('/repo/submission/evidence.json')).toBe(false);
   });
 
+  it('keeps overlapping registrations protected until all writers roll back', () => {
+    const first = registerGeneratedOutput('/repo/submission/evidence.json');
+    const second = registerGeneratedOutput('/repo/submission/evidence.json');
+
+    first();
+    expect(isGeneratedOutput('/repo/submission/evidence.json')).toBe(true);
+
+    second();
+    expect(isGeneratedOutput('/repo/submission/evidence.json')).toBe(false);
+  });
+
+  it('does not let a stale rollback remove a newer registration', () => {
+    const staleRollback = registerGeneratedOutput('/repo/submission/evidence.json');
+    clearGeneratedOutputs();
+    registerGeneratedOutput('/repo/submission/evidence.json');
+
+    staleRollback();
+
+    expect(isGeneratedOutput('/repo/submission/evidence.json')).toBe(true);
+  });
+
   it('preserves case on case-sensitive platforms', () => {
     registerGeneratedOutput('/repo/src/App.ts');
 

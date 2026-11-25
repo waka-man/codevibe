@@ -897,11 +897,7 @@ export class MetricsRepository {
    */
   async getUnreviewedFiles(date: string): Promise<any[]> {
     const files = await this.db.getUnreviewedFiles(date);
-    return files.filter(
-      (file) =>
-        !isGeneratedOutput(file.filePath) &&
-        !isExcludedFile(file.filePath),
-    );
+    return files.filter((file) => !isExcludedFile(file.filePath));
   }
 
   /**

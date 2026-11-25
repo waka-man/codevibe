@@ -14,7 +14,7 @@ interface OutputTarget {
   toString?: () => string;
 }
 
-const registeredOutputs = new Set<string>();
+const registeredOutputs = new Map<string, Set<symbol>>();
 
 function normalize(value: string): string {
   const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '');
@@ -46,9 +46,12 @@ function targetKeys(target: OutputTarget | string | null | undefined): string[] 
  * Returns a rollback function for failed writes.
  */
 export function registerGeneratedOutput(target: OutputTarget | string): () => void {
-  const keys = targetKeys(target).filter(Boolean);
+  const keys = new Set(targetKeys(target).filter(Boolean));
+  const registration = Symbol('generated-output');
   for (const key of keys) {
-    registeredOutputs.add(key);
+    const registrations = registeredOutputs.get(key) ?? new Set<symbol>();
+    registrations.add(registration);
+    registeredOutputs.set(key, registrations);
   }
   let active = true;
   return () => {
@@ -57,7 +60,11 @@ export function registerGeneratedOutput(target: OutputTarget | string): () => vo
     }
     active = false;
     for (const key of keys) {
-      registeredOutputs.delete(key);
+      const registrations = registeredOutputs.get(key);
+      registrations?.delete(registration);
+      if (registrations?.size === 0) {
+        registeredOutputs.delete(key);
+      }
     }
   };
 }
@@ -66,7 +73,9 @@ export function registerGeneratedOutput(target: OutputTarget | string): () => vo
 export function isGeneratedOutput(
   target: OutputTarget | string | null | undefined,
 ): boolean {
-  return targetKeys(target).some((key) => registeredOutputs.has(key));
+  return targetKeys(target).some(
+    (key) => (registeredOutputs.get(key)?.size ?? 0) > 0,
+  );
 }
 
 /** Clear exact registrations (extension shutdown/tests). */
