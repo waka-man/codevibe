@@ -172,6 +172,36 @@ describe('agentic file change detection (real git repo)', () => {
     expect(events).toHaveLength(0);
   });
 
+  it('does not flag a staged basename-changing Git move', async () => {
+    const original = path.join(repo, 'old.ts');
+    fs.writeFileSync(original, code(30, 'moved'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm moved-file', { cwd: repo });
+
+    execSync('git mv old.ts renamed.ts', { cwd: repo });
+
+    await fire('renamed.ts', true);
+
+    expect(events).toHaveLength(0);
+  });
+
+  it('does not treat git rm --cached plus an identical staged file as a move', async () => {
+    const sourceDir = path.join(repo, 'lib');
+    fs.mkdirSync(sourceDir);
+    fs.writeFileSync(path.join(sourceDir, 'same.ts'), code(30, 'same'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm same-name-source', { cwd: repo });
+
+    execSync('git rm --cached lib/same.ts', { cwd: repo });
+    fs.writeFileSync(path.join(repo, 'same.ts'), code(30, 'same'));
+    execSync('git add same.ts', { cwd: repo });
+
+    await fire('same.ts', true);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].detectionMethod).toBe('external-file-change');
+  });
+
   it('detects a pure move when the workspace is a repository subdirectory', async () => {
     const workspace = path.join(repo, 'sub');
     fs.mkdirSync(workspace);

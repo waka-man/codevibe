@@ -7,6 +7,7 @@
  * hash with tracked source content to identify a content-preserving move.
  */
 
+import * as fs from 'fs';
 import * as path from 'path';
 
 function git(
@@ -71,9 +72,13 @@ export function findGitMoveSource(
       'rev-parse',
       '--show-toplevel',
     ]).trim();
-    const relativePath = toPosix(path.relative(repoRoot, filePath));
     const workspaceRepoPath =
       git(workspaceFolder, ['rev-parse', '--show-prefix']).trim().replace(/\/+$/, '') || '.';
+    const relativePath = path.posix.normalize(
+      workspaceRepoPath === '.'
+        ? workspaceRelativePath
+        : `${workspaceRepoPath}/${workspaceRelativePath}`,
+    );
 
     // --path applies the same clean filters / line-ending rules Git would use
     // for this destination, so CRLF and filtered files compare correctly.
@@ -108,10 +113,24 @@ export function findGitMoveSource(
         'HEAD',
         '--',
       ]).split('\0').filter(Boolean);
-      const destinationBasename = path.posix.basename(relativePath);
       for (const sourcePath of stagedDeletedPaths) {
-        if (path.posix.basename(sourcePath) !== destinationBasename) {
+        const sourceAbsolutePath = resolveWorkspaceSource(
+          workspaceFolder,
+          workspaceRepoPath,
+          sourcePath,
+        );
+        if (!sourceAbsolutePath) {
           continue;
+        }
+        try {
+          // `git rm --cached` also appears as a staged deletion, but the
+          // source still exists. lstat detects broken symlinks as well.
+          fs.lstatSync(sourceAbsolutePath);
+          continue;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+            continue;
+          }
         }
         try {
           const sourceHash = git(workspaceFolder, [
@@ -119,7 +138,7 @@ export function findGitMoveSource(
             `HEAD:${sourcePath}`,
           ]).trim();
           if (sourceHash === destinationHash) {
-            return resolveWorkspaceSource(workspaceFolder, workspaceRepoPath, sourcePath);
+            return sourceAbsolutePath;
           }
         } catch {
           // A staged addition may not exist in HEAD; it is not a move source.
