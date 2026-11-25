@@ -38,6 +38,10 @@ import { ConfigRepository } from '../../storage/ConfigRepository';
 import { ThresholdManager } from '../../core/ThresholdManager';
 import { DailyMetrics, UserConfig, DeveloperLevel, AlertFrequency, AITool } from '../../types';
 import * as vscode from 'vscode';
+import {
+  clearGeneratedOutputs,
+  isGeneratedOutput,
+} from '../../utils/GeneratedOutputGuard';
 
 describe('DashboardProvider', () => {
   let dashboardProvider: DashboardProvider;
@@ -105,6 +109,7 @@ describe('DashboardProvider', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    clearGeneratedOutputs();
 
     mockExtensionUri = { fsPath: '/extension', scheme: 'file' } as vscode.Uri;
 
@@ -517,6 +522,9 @@ describe('DashboardProvider', () => {
     it('should export data to JSON file', async () => {
       const mockUri = vscode.Uri.file('/export.json');
       (vscode.window.showSaveDialog as jest.Mock).mockResolvedValue(mockUri);
+      (vscode.workspace.fs.writeFile as jest.Mock).mockImplementation(async () => {
+        expect(isGeneratedOutput('/export.json')).toBe(true);
+      });
 
       let messageHandler: (data: { type: string }) => Promise<void>;
       mockWebviewView.webview.onDidReceiveMessage.mockImplementation((handler) => {

@@ -119,6 +119,21 @@ describe("Excluded-path purge", () => {
     expect(reviews.map((r) => r.filePath)).toEqual(["/proj/src/app.ts"]);
   });
 
+  it("purges historical CodeVibe report and export output", async () => {
+    await dbManager.insertEvent(makeEvent("/proj/hw1.report.json", 500));
+    await dbManager.insertEvent(makeEvent("/proj/codepause-export-123.json", 300));
+    await dbManager.insertOrUpdateFileReviewStatus(
+      makeReview("/proj/hw1.report.json", 500),
+    );
+
+    const result = await metricsRepo.purgeExcludedEvents();
+
+    expect(result.eventsDeleted).toBe(2);
+    expect(result.fileReviewsDeleted).toBe(1);
+    expect(await dbManager.getRecentEvents(100)).toEqual([]);
+    expect(await dbManager.getFileReviewsForDate(today)).toEqual([]);
+  });
+
   it("does not touch lookalike paths", async () => {
     await dbManager.insertEvent(
       makeEvent("/proj/my-node_modules-backup/app.ts", 7),

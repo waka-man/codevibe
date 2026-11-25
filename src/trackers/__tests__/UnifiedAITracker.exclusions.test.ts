@@ -12,6 +12,10 @@ import * as vscode from 'vscode';
 import { UnifiedAITracker } from '../UnifiedAITracker';
 import { AIDetector } from '../../detection/AIDetector';
 import { AIDetectionMethod } from '../../detection/types';
+import {
+  clearGeneratedOutputs,
+  registerGeneratedOutput,
+} from '../../utils/GeneratedOutputGuard';
 
 let mockHandlers: {
   textChange?: (event: any) => void;
@@ -132,9 +136,13 @@ describe('UnifiedAITracker file-system change handling', () => {
     // Fake only timers: the code path awaits setImmediate, which must stay real.
     jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
     jest.clearAllMocks();
+    clearGeneratedOutputs();
     mockHandlers = {};
     events = [];
     (vscode.workspace as any).workspaceFolders = undefined;
+    (vscode.workspace as any).textDocuments = [];
+    (vscode.window as any).visibleTextEditors = [];
+    delete (vscode.window as any).tabGroups;
     (vscode.workspace.openTextDocument as jest.Mock).mockImplementation(
       async (u: any) => doc(u.fsPath, 'line1\nline2\nline3\nline4\n'),
     );
@@ -145,6 +153,10 @@ describe('UnifiedAITracker file-system change handling', () => {
 
   afterEach(() => {
     tracker.dispose();
+    clearGeneratedOutputs();
+    (vscode.workspace as any).textDocuments = [];
+    (vscode.window as any).visibleTextEditors = [];
+    delete (vscode.window as any).tabGroups;
     jest.clearAllTimers();
     jest.useRealTimers();
   });
@@ -404,6 +416,76 @@ describe('UnifiedAITracker file-system change handling', () => {
       await tracker.initialize();
       await mockHandlers.fileChange!(uri('/proj/.vscode/codepause-baselines.json'));
       expect(events).toHaveLength(0);
+    });
+
+    it('ignores report creation before opening or changing the file', async () => {
+      await tracker.initialize();
+      const reportPath = '/proj/hw1.report.json';
+
+      await mockHandlers.fileCreate!(uri(reportPath));
+      await mockHandlers.fileChange!(uri(reportPath));
+      await flushDebounce();
+
+      expect(events).toHaveLength(0);
+      expect(execSync).not.toHaveBeenCalled();
+      expect(vscode.workspace.openTextDocument).not.toHaveBeenCalled();
+    });
+
+    it('ignores an arbitrary registered export destination', async () => {
+      const outputPath = '/proj/submission/evidence file.json';
+      registerGeneratedOutput(outputPath);
+      await tracker.initialize();
+
+      await mockHandlers.fileCreate!(uri(outputPath));
+      await mockHandlers.fileChange!(uri(outputPath));
+      await flushDebounce();
+
+      expect(events).toHaveLength(0);
+      expect(execSync).not.toHaveBeenCalled();
+    });
+
+    it('ignores text edits to registered export output', async () => {
+      const outputPath = '/proj/submission/evidence.json';
+      registerGeneratedOutput(outputPath);
+      await tracker.initialize();
+
+      mockHandlers.textChange!({
+        document: doc(outputPath, '{}'),
+        contentChanges: [{ text: 'x'.repeat(600), rangeLength: 0 }],
+      });
+
+      expect(events).toHaveLength(0);
+    });
+  });
+
+  describe('inactive open documents', () => {
+    it('does not attribute Save All/autosave watcher events to AI', async () => {
+      const filePath = '/proj/src/app.ts';
+      (vscode.workspace as any).textDocuments = [doc(filePath, 'line1\n')];
+      (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValue(
+        doc(filePath, Array(50).fill('x').join('\n')),
+      );
+      await tracker.initialize();
+
+      await mockHandlers.fileChange!(uri(filePath));
+      await flushDebounce();
+
+      expect(events).toHaveLength(0);
+      expect(vscode.workspace.openTextDocument).not.toHaveBeenCalled();
+    });
+
+    it('recognises inactive tabs through VS Code tab groups', async () => {
+      const filePath = '/proj/src/app.ts';
+      (vscode.window as any).tabGroups = {
+        all: [{ tabs: [{ input: { uri: uri(filePath) } }] }],
+      };
+      await tracker.initialize();
+
+      await mockHandlers.fileChange!(uri(filePath));
+      await flushDebounce();
+
+      expect(events).toHaveLength(0);
+      expect(vscode.workspace.openTextDocument).not.toHaveBeenCalled();
     });
   });
 

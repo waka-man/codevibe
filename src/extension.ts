@@ -36,6 +36,10 @@ import { EventType, DeveloperLevel } from "./types";
 import { isGitRepository } from "./utils/SecurityUtils";
 import { getToday } from "./utils/DateUtils";
 import {
+  clearGeneratedOutputs,
+  registerGeneratedOutput,
+} from "./utils/GeneratedOutputGuard";
+import {
   registerCommandSafe,
   resetCommandRegistration,
 } from "./utils/CommandRegistration";
@@ -174,6 +178,8 @@ function getWorkspacePath(): string | undefined {
  * Extension deactivation
  */
 export async function deactivate() {
+  clearGeneratedOutputs();
+
   // Drop our command registrations so a re-activation in the same process
   // starts clean instead of colliding with itself (issue #4).
   resetCommandRegistration();
@@ -1529,7 +1535,9 @@ async function registerCommands(
       const pdfPath = target.fsPath.replace(/\.json$/i, ".pdf");
       try {
         const pdfBuffer = await new AssignmentPdfGenerator().generatePdfBuffer(report);
-        await vscode.workspace.fs.writeFile(vscode.Uri.file(pdfPath), pdfBuffer as unknown as Uint8Array);
+        const pdfUri = vscode.Uri.file(pdfPath);
+        registerGeneratedOutput(pdfUri);
+        await vscode.workspace.fs.writeFile(pdfUri, pdfBuffer as unknown as Uint8Array);
       } catch (error) {
         console.error("Failed to generate PDF report:", error);
         vscode.window.showWarningMessage(

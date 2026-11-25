@@ -9,6 +9,7 @@ import { ConfigRepository } from '../storage/ConfigRepository';
 import { ExportData } from '../types';
 import { safeJsonParse, isValidImportFileSize } from '../utils/SecurityUtils';
 import { toLocalDateString } from '../utils/DateUtils';
+import { registerGeneratedOutput } from '../utils/GeneratedOutputGuard';
 
 export class DataExporter {
   private metricsRepository: MetricsRepository;
@@ -44,6 +45,7 @@ export class DataExporter {
       });
 
       if (uri) {
+        registerGeneratedOutput(uri);
         await vscode.workspace.fs.writeFile(uri, Buffer.from(json, 'utf8'));
         vscode.window.showInformationMessage(
           `Data exported successfully to ${uri.fsPath}`
@@ -84,6 +86,7 @@ export class DataExporter {
       });
 
       if (uri) {
+        registerGeneratedOutput(uri);
         await vscode.workspace.fs.writeFile(uri, Buffer.from(json, 'utf8'));
         vscode.window.showInformationMessage('Metrics exported successfully');
       }
@@ -112,6 +115,7 @@ export class DataExporter {
       });
 
       if (uri) {
+        registerGeneratedOutput(uri);
         await vscode.workspace.fs.writeFile(uri, Buffer.from(json, 'utf8'));
         vscode.window.showInformationMessage('Configuration exported successfully');
       }
@@ -219,6 +223,7 @@ export class DataExporter {
       });
 
       if (uri) {
+        registerGeneratedOutput(uri);
         await vscode.workspace.fs.writeFile(uri, Buffer.from(csv, 'utf8'));
         vscode.window.showInformationMessage('Data exported to CSV successfully');
       }
