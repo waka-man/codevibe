@@ -19,6 +19,7 @@ import {
   AssignmentMetrics,
 } from "../types";
 import { getDashboardHtml } from "./DashboardHtml";
+import { registerGeneratedOutput } from "../utils/GeneratedOutputGuard";
 import { DiffViewService } from "./DiffViewService";
 import { FileTreeBuilder } from "./FileTreeBuilder";
 import { DiffViewerHelper } from "./DiffViewerHelper";
@@ -681,7 +682,14 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       });
 
       if (uri) {
-        await vscode.workspace.fs.writeFile(uri, Buffer.from(json, "utf8"));
+        const registration = registerGeneratedOutput(uri);
+        try {
+          await vscode.workspace.fs.writeFile(uri, Buffer.from(json, "utf8"));
+        } catch (error) {
+          registration.rollback();
+          throw error;
+        }
+        registration.complete();
         vscode.window.showInformationMessage(
           "Dashboard data exported successfully",
         );

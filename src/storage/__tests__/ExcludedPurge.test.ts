@@ -18,6 +18,10 @@ import {
   CodeSource,
   ReviewQuality,
 } from "../../types";
+import {
+  clearGeneratedOutputs,
+  registerGeneratedOutput,
+} from "../../utils/GeneratedOutputGuard";
 
 describe("Excluded-path purge", () => {
   let dbManager: DatabaseManager;
@@ -69,6 +73,7 @@ describe("Excluded-path purge", () => {
   }
 
   beforeEach(async () => {
+    clearGeneratedOutputs();
     tempDir = path.join(
       __dirname,
       "..",
@@ -84,6 +89,7 @@ describe("Excluded-path purge", () => {
   });
 
   afterEach(() => {
+    clearGeneratedOutputs();
     dbManager.close();
     if (fs.existsSync(tempDir)) {
       fs.rmSync(tempDir, { recursive: true, force: true });
@@ -117,6 +123,39 @@ describe("Excluded-path purge", () => {
 
     const reviews = await dbManager.getFileReviewsForDate(today);
     expect(reviews.map((r) => r.filePath)).toEqual(["/proj/src/app.ts"]);
+  });
+
+  it("persists already-approved events when a path is registered before persistence", async () => {
+    const outputPath = "/proj/submission/evidence.json";
+    const event = makeEvent(outputPath, 5);
+    registerGeneratedOutput(outputPath);
+
+    expect(
+      await metricsRepo.recordEvent(event, [], {
+        generatedOutputApproved: true,
+      }),
+    ).toBe(1);
+    expect(await dbManager.getRecentEvents(100)).toHaveLength(1);
+  });
+
+  it("runtime output registrations block new writes but never authorize historical purges", async () => {
+    const outputPath = "/proj/submission/evidence.json";
+    await dbManager.insertEvent(makeEvent(outputPath, 500));
+    await dbManager.insertOrUpdateFileReviewStatus(
+      makeReview(outputPath, 500),
+    );
+    registerGeneratedOutput(outputPath);
+
+    expect(await metricsRepo.recordEvent(makeEvent(outputPath, 5))).toBe(0);
+    await metricsRepo.saveFileReviewStatus(makeReview(outputPath, 5));
+
+    const result = await metricsRepo.purgeExcludedEvents();
+
+    expect(result.eventsDeleted).toBe(0);
+    expect(result.fileReviewsDeleted).toBe(0);
+    expect(await dbManager.getRecentEvents(100)).toHaveLength(1);
+    expect(await dbManager.getFileReviewsForDate(today)).toHaveLength(1);
+    expect(await metricsRepo.getUnreviewedFiles(today)).toHaveLength(1);
   });
 
   it("does not touch lookalike paths", async () => {

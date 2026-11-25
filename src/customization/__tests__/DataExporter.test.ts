@@ -28,6 +28,10 @@ jest.mock('vscode', () => ({
 import { DataExporter } from '../DataExporter';
 import { MetricsRepository } from '../../storage/MetricsRepository';
 import { ConfigRepository } from '../../storage/ConfigRepository';
+import {
+  clearGeneratedOutputs,
+  isGeneratedOutput,
+} from '../../utils/GeneratedOutputGuard';
 
 describe('DataExporter', () => {
   let dataExporter: DataExporter;
@@ -35,6 +39,7 @@ describe('DataExporter', () => {
   let mockConfigRepo: jest.Mocked<ConfigRepository>;
 
   beforeEach(() => {
+    clearGeneratedOutputs();
     mockMetricsRepo = new MetricsRepository(null as any) as jest.Mocked<MetricsRepository>;
     mockConfigRepo = new ConfigRepository(null as any) as jest.Mocked<ConfigRepository>;
     dataExporter = new DataExporter(mockMetricsRepo, mockConfigRepo);
@@ -495,8 +500,12 @@ describe('DataExporter', () => {
       } as any);
     });
 
-    it('should export all data successfully', async () => {
+    it('should export all data successfully and register the output before writing', async () => {
       const vscode = require('vscode');
+      vscode.workspace.fs.writeFile.mockImplementation(async () => {
+        expect(isGeneratedOutput('/test/export.json')).toBe(true);
+      });
+
       await dataExporter.exportAllData();
 
       expect(vscode.window.showSaveDialog).toHaveBeenCalled();
@@ -520,6 +529,7 @@ describe('DataExporter', () => {
       await dataExporter.exportAllData();
 
       expect(vscode.window.showErrorMessage).toHaveBeenCalled();
+      expect(isGeneratedOutput('/test/export.json')).toBe(false);
     });
 
     it('should export metrics successfully', async () => {

@@ -17,6 +17,10 @@ import { PolicyEngine } from "../PolicyEngine";
 import { AssignmentReportGenerator } from "../AssignmentReportGenerator";
 import { writeAssignmentReport } from "../AssignmentReportFile";
 import {
+  clearGeneratedOutputs,
+  isGeneratedOutput,
+} from "../../utils/GeneratedOutputGuard";
+import {
   AIDetectionMethod,
   AITool,
   Assignment,
@@ -124,6 +128,7 @@ describe("AssignmentReport export + integrity", () => {
   let report: AssignmentReport;
 
   beforeEach(() => {
+    clearGeneratedOutputs();
     generator = new AssignmentReportGenerator();
     const metrics = new PolicyEngine().computeMetrics(
       assignment,
@@ -170,14 +175,25 @@ describe("AssignmentReport export + integrity", () => {
   describe("AssignmentReportGenerator", () => {
     it("writes a complete report as formatted UTF-8 JSON", async () => {
       const writeFile = jest.fn().mockResolvedValue(undefined);
-      const target = { fsPath: "/tmp/assignment.report.json" };
+      const target = { fsPath: "/tmp/submission/evidence.json" };
 
       await writeAssignmentReport(writeFile, target, report);
 
+      expect(isGeneratedOutput(target.fsPath)).toBe(true);
       expect(writeFile).toHaveBeenCalledWith(
         target,
         Buffer.from(JSON.stringify(report, null, 2), "utf8"),
       );
+    });
+
+    it("rolls back output registration when writing fails", async () => {
+      const target = { fsPath: "/tmp/submission/evidence.json" };
+      const writeFile = jest.fn().mockRejectedValue(new Error("write failed"));
+
+      await expect(writeAssignmentReport(writeFile, target, report)).rejects.toThrow(
+        "write failed",
+      );
+      expect(isGeneratedOutput(target.fsPath)).toBe(false);
     });
 
     it("produces a well-formed report matching the AssignmentReport type", () => {

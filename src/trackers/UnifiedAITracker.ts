@@ -13,6 +13,7 @@ import { AIDetector } from '../detection/AIDetector';
 import { AIToolDetector } from '../detection/AIToolDetector';
 import { EventType, CodeSource, AIClassification } from '../types';
 import { isExcludedFile, isPackageManagerManifestFile } from '../utils/ExcludedPaths';
+import { isGeneratedOutput } from '../utils/GeneratedOutputGuard';
 import { ScaffoldActivityTracker } from '../detection/ScaffoldCommandDetector';
 import { ChangeAttributionClassifier } from '../detection/ChangeAttributionClassifier';
 import { isGitOperationActive, waitForGitIdle } from '../utils/GitOperationDetector';
@@ -115,7 +116,52 @@ export class UnifiedAITracker extends BaseTracker {
    * work so installs never burst fake AI events.
    */
   private isExcluded(filePath: string): boolean {
-    return isExcludedFile(filePath, this.customExcludedGlobs);
+    return (
+      isGeneratedOutput(filePath) ||
+      isExcludedFile(filePath, this.customExcludedGlobs)
+    );
+  }
+
+  /**
+   * True when the file is open in any editor tab, including inactive tabs.
+   * `openFiles` only tracks visible editors and misses Save All/autosave after
+   * switching tabs. Tab groups avoid treating documents opened internally by
+   * `openTextDocument` as user-open source files.
+   */
+  private isDocumentOpen(filePath: string): boolean {
+    type FileUri = { fsPath?: string; scheme?: string };
+    const matchesFile = (uri: FileUri | undefined): boolean =>
+      !!uri?.fsPath &&
+      (!uri.scheme || uri.scheme === 'file') &&
+      uri.fsPath === filePath;
+    const tabGroups = (vscode.window as unknown as {
+      tabGroups?: {
+        all?: Array<{
+          tabs?: Array<{
+            input?: {
+              uri?: FileUri;
+              original?: FileUri;
+              modified?: FileUri;
+            };
+          }>;
+        }>;
+      };
+    }).tabGroups;
+    if (tabGroups?.all) {
+      return tabGroups.all.some((group) =>
+        group.tabs?.some((tab) =>
+          [tab.input?.uri, tab.input?.original, tab.input?.modified].some(
+            matchesFile,
+          ),
+        ) ?? false,
+      );
+    }
+    return (
+      this.openFiles.has(filePath) ||
+      (vscode.workspace.textDocuments ?? []).some((document) =>
+        matchesFile(document.uri),
+      )
+    );
   }
 
   /** Git operation check for the text-change path (no file-level git work). */
@@ -622,7 +668,7 @@ export class UnifiedAITracker extends BaseTracker {
       documentUri: event.document.uri.fsPath,
       isActiveEditor: vscode.window.activeTextEditor?.document === event.document
     }, {
-      wasFileOpen: this.openFiles.has(event.document.uri.fsPath),
+      wasFileOpen: this.isDocumentOpen(event.document.uri.fsPath),
       isInlineCompletion: hasInlineCompletion
     });
 
@@ -840,7 +886,7 @@ export class UnifiedAITracker extends BaseTracker {
 
     this.log(`[FILE-CHANGE] FileSystemWatcher triggered for: ${fileName}`);
 
-    const isFileOpen = this.openFiles.has(filePath);
+    const isFileOpen = this.isDocumentOpen(filePath);
 
     // Deduplication: Skip file watcher if there was a recent text change event
     // This prevents double counting when user edits trigger both handlers
@@ -908,7 +954,7 @@ export class UnifiedAITracker extends BaseTracker {
 
     // The editor change event is authoritative while a document is open.
     // Ignore delayed watcher notifications for that same document.
-    if (this.openFiles.has(filePath)) {
+    if (this.isDocumentOpen(filePath)) {
       this.log(`[PROCESS-CHANGE] SKIPPED - file is open in the editor: ${filePath}`);
       return;
     }

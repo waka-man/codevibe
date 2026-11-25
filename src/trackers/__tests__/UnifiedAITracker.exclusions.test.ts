@@ -12,6 +12,10 @@ import * as vscode from 'vscode';
 import { UnifiedAITracker } from '../UnifiedAITracker';
 import { AIDetector } from '../../detection/AIDetector';
 import { AIDetectionMethod } from '../../detection/types';
+import {
+  clearGeneratedOutputs,
+  registerGeneratedOutput,
+} from '../../utils/GeneratedOutputGuard';
 
 let mockHandlers: {
   textChange?: (event: any) => void;
@@ -132,9 +136,13 @@ describe('UnifiedAITracker file-system change handling', () => {
     // Fake only timers: the code path awaits setImmediate, which must stay real.
     jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick'] });
     jest.clearAllMocks();
+    clearGeneratedOutputs();
     mockHandlers = {};
     events = [];
     (vscode.workspace as any).workspaceFolders = undefined;
+    (vscode.workspace as any).textDocuments = [];
+    (vscode.window as any).visibleTextEditors = [];
+    delete (vscode.window as any).tabGroups;
     (vscode.workspace.openTextDocument as jest.Mock).mockImplementation(
       async (u: any) => doc(u.fsPath, 'line1\nline2\nline3\nline4\n'),
     );
@@ -145,6 +153,10 @@ describe('UnifiedAITracker file-system change handling', () => {
 
   afterEach(() => {
     tracker.dispose();
+    clearGeneratedOutputs();
+    (vscode.workspace as any).textDocuments = [];
+    (vscode.window as any).visibleTextEditors = [];
+    delete (vscode.window as any).tabGroups;
     jest.clearAllTimers();
     jest.useRealTimers();
   });
@@ -234,6 +246,13 @@ describe('UnifiedAITracker file-system change handling', () => {
       (vscode.workspace as any).workspaceFolders = undefined;
       await tracker.initialize();
       await changeTwice('/proj/my-node_modules-backup/app.ts', 20);
+      expect(events).toHaveLength(1);
+    });
+
+    it('does not suppress an unrelated report-like filename', async () => {
+      (vscode.workspace as any).workspaceFolders = undefined;
+      await tracker.initialize();
+      await changeTwice('/proj/audit.report.json', 20);
       expect(events).toHaveLength(1);
     });
   });
@@ -404,6 +423,135 @@ describe('UnifiedAITracker file-system change handling', () => {
       await tracker.initialize();
       await mockHandlers.fileChange!(uri('/proj/.vscode/codepause-baselines.json'));
       expect(events).toHaveLength(0);
+    });
+
+    it('ignores a registered report before opening or changing the file', async () => {
+      const reportPath = '/proj/hw1.report.json';
+      registerGeneratedOutput(reportPath);
+      await tracker.initialize();
+
+      await mockHandlers.fileCreate!(uri(reportPath));
+      await mockHandlers.fileChange!(uri(reportPath));
+      await flushDebounce();
+
+      expect(events).toHaveLength(0);
+      expect(execSync).not.toHaveBeenCalled();
+      expect(vscode.workspace.openTextDocument).not.toHaveBeenCalled();
+    });
+
+    it('ignores an arbitrary registered export destination', async () => {
+      const outputPath = '/proj/submission/evidence file.json';
+      registerGeneratedOutput(outputPath);
+      await tracker.initialize();
+
+      await mockHandlers.fileCreate!(uri(outputPath));
+      await mockHandlers.fileChange!(uri(outputPath));
+      await flushDebounce();
+
+      expect(events).toHaveLength(0);
+      expect(execSync).not.toHaveBeenCalled();
+    });
+
+    it('ignores text edits to registered export output', async () => {
+      const outputPath = '/proj/submission/evidence.json';
+      registerGeneratedOutput(outputPath);
+      await tracker.initialize();
+
+      mockHandlers.textChange!({
+        document: doc(outputPath, '{}'),
+        contentChanges: [{ text: 'x'.repeat(600), rangeLength: 0 }],
+      });
+
+      expect(events).toHaveLength(0);
+    });
+
+    it('tracks genuine closed-file edits after a completed export guard expires', async () => {
+      const outputPath = '/proj/submission/evidence.json';
+      const registration = registerGeneratedOutput(outputPath);
+      registration.complete();
+      jest.advanceTimersByTime(15_001);
+      await tracker.initialize();
+
+      await mockHandlers.fileChange!(uri(outputPath));
+      await new Promise((resolve) => setImmediate(resolve));
+      (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValue(
+        doc(outputPath, Array(20).fill('x').join('\n')),
+      );
+      await mockHandlers.fileChange!(uri(outputPath));
+      await flushDebounce();
+
+      expect(events).toHaveLength(1);
+    });
+  });
+
+  describe('inactive open documents', () => {
+    it('does not attribute Save All/autosave watcher events to AI', async () => {
+      const filePath = '/proj/src/app.ts';
+      (vscode.workspace as any).textDocuments = [doc(filePath, 'line1\n')];
+      (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValue(
+        doc(filePath, Array(50).fill('x').join('\n')),
+      );
+      await tracker.initialize();
+
+      await mockHandlers.fileChange!(uri(filePath));
+      await flushDebounce();
+
+      expect(events).toHaveLength(0);
+      expect(vscode.workspace.openTextDocument).not.toHaveBeenCalled();
+    });
+
+    it('recognises inactive tabs through VS Code tab groups', async () => {
+      const filePath = '/proj/src/app.ts';
+      (vscode.window as any).tabGroups = {
+        all: [{ tabs: [{ input: { uri: uri(filePath) } }] }],
+      };
+      await tracker.initialize();
+
+      await mockHandlers.fileChange!(uri(filePath));
+      await flushDebounce();
+
+      expect(events).toHaveLength(0);
+      expect(vscode.workspace.openTextDocument).not.toHaveBeenCalled();
+    });
+
+    it('recognises inactive diff tabs through original and modified URIs', async () => {
+      const filePath = '/proj/src/app.ts';
+      (vscode.window as any).tabGroups = {
+        all: [{
+          tabs: [{
+            input: { original: uri(filePath), modified: uri(filePath) },
+          }],
+        }],
+      };
+      await tracker.initialize();
+
+      await mockHandlers.fileChange!(uri(filePath));
+      await flushDebounce();
+
+      expect(events).toHaveLength(0);
+      expect(vscode.workspace.openTextDocument).not.toHaveBeenCalled();
+    });
+
+    it('does not hide external writes behind non-file tabs', async () => {
+      const filePath = '/proj/src/app.ts';
+      (vscode.window as any).tabGroups = {
+        all: [{
+          tabs: [{
+            input: { uri: { fsPath: filePath, scheme: 'vscode-remote' } },
+          }],
+        }],
+      };
+      await tracker.initialize();
+
+      await mockHandlers.fileChange!(uri(filePath));
+      await new Promise((resolve) => setImmediate(resolve));
+      (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValue(
+        doc(filePath, Array(20).fill('x').join('\n')),
+      );
+      await mockHandlers.fileChange!(uri(filePath));
+      await flushDebounce();
+
+      expect(events).toHaveLength(1);
     });
   });
 
