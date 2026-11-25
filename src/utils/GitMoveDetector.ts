@@ -12,11 +12,12 @@ import * as path from 'path';
 function git(
   workspaceFolder: string,
   args: string[],
+  cwd: string = workspaceFolder,
 ): string {
   const { execFileSync } = require('child_process');
   return String(
     execFileSync('git', args, {
-      cwd: workspaceFolder,
+      cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       maxBuffer: 16 * 1024 * 1024,
@@ -24,19 +25,39 @@ function git(
   );
 }
 
+function toPosix(filePath: string): string {
+  return filePath.split(path.sep).join('/');
+}
+
+/** Resolve a repository-relative source through the workspace's own path. */
+function resolveWorkspaceSource(
+  repoRoot: string,
+  workspaceFolder: string,
+  sourceRepoPath: string,
+): string | null {
+  const workspaceRepoPath = toPosix(path.relative(repoRoot, workspaceFolder)) || '.';
+  const relativeToWorkspace = path.posix.relative(workspaceRepoPath, sourceRepoPath);
+  if (
+    !relativeToWorkspace ||
+    relativeToWorkspace === '..' ||
+    relativeToWorkspace.startsWith('../') ||
+    path.posix.isAbsolute(relativeToWorkspace)
+  ) {
+    return null;
+  }
+  return path.join(workspaceFolder, ...relativeToWorkspace.split('/'));
+}
+
 /**
  * Return the absolute tracked source path whose content matches `filePath`,
- * or null when this is not a pure move. All commands use argument arrays, so spaces,
- * quotes, and shell metacharacters in paths remain literal.
+ * or null when this is not a pure move. All commands use argument arrays, so
+ * spaces, quotes, and shell metacharacters in paths remain literal.
  */
 export function findGitMoveSource(
   workspaceFolder: string,
   filePath: string,
 ): string | null {
-  const workspaceRelativePath = path
-    .relative(workspaceFolder, filePath)
-    .split(path.sep)
-    .join('/');
+  const workspaceRelativePath = toPosix(path.relative(workspaceFolder, filePath));
   if (
     !workspaceRelativePath ||
     workspaceRelativePath === '..' ||
@@ -51,10 +72,7 @@ export function findGitMoveSource(
       'rev-parse',
       '--show-toplevel',
     ]).trim();
-    const relativePath = path
-      .relative(repoRoot, filePath)
-      .split(path.sep)
-      .join('/');
+    const relativePath = toPosix(path.relative(repoRoot, filePath));
 
     // --path applies the same clean filters / line-ending rules Git would use
     // for this destination, so CRLF and filtered files compare correctly.
@@ -67,7 +85,8 @@ export function findGitMoveSource(
 
     // Staged moves are already renames in the index. Only accept R100 and
     // verify the working file still matches the staged destination blob, so
-    // an unstaged edit after `git mv` is not hidden.
+    // an unstaged edit after `git mv` is not hidden. With -z, ordinary records
+    // are [status, path] while rename/copy records are [status, old, new].
     const stagedChanges = git(workspaceFolder, [
       'diff',
       '--cached',
@@ -77,36 +96,48 @@ export function findGitMoveSource(
       'HEAD',
       '--',
     ]).split('\0').filter(Boolean);
-    for (let i = 0; i < stagedChanges.length; i++) {
-      const status = stagedChanges[i];
-      if (!status.startsWith('R')) {
-        continue;
-      }
-      const sourcePath = stagedChanges[i + 1];
-      const stagedPath = stagedChanges[i + 2];
-      i += 2;
-      if (status !== 'R100' || stagedPath !== relativePath) {
-        continue;
-      }
-      const stagedHash = git(workspaceFolder, [
-        'rev-parse',
-        `:${relativePath}`,
-      ]).trim();
-      if (stagedHash === destinationHash) {
-        return path.join(repoRoot, ...sourcePath.split('/'));
+    for (let i = 0; i < stagedChanges.length;) {
+      const status = stagedChanges[i++];
+      if (status.startsWith('R') || status.startsWith('C')) {
+        const sourcePath = stagedChanges[i++];
+        const stagedPath = stagedChanges[i++];
+        if (status !== 'R100' || stagedPath !== relativePath) {
+          continue;
+        }
+        const stagedHash = git(workspaceFolder, [
+          'rev-parse',
+          `:${relativePath}`,
+        ]).trim();
+        if (stagedHash === destinationHash) {
+          return resolveWorkspaceSource(repoRoot, workspaceFolder, sourcePath);
+        }
+      } else {
+        i++; // ordinary status has one path token
       }
     }
 
-    // Unstaged moves: --full-name keeps paths repository-root relative even
-    // when the workspace is a subdirectory. --stage supplies the source blob
-    // ID directly, avoiding one Git process per deleted file.
-    const deletedEntries = git(workspaceFolder, [
+    // Unstaged moves: get the actual deleted-path set first. Combining
+    // --stage with --deleted does not filter the index, so intersect the
+    // stage records with this set explicitly.
+    const deletedPaths = git(workspaceFolder, [
       'ls-files',
-      '--stage',
       '--deleted',
       '--full-name',
       '-z',
     ]).split('\0').filter(Boolean);
+    if (deletedPaths.length === 0) {
+      return null;
+    }
+    const deletedSet = new Set(deletedPaths);
+    const deletedEntries = git(workspaceFolder, [
+      '--literal-pathspecs',
+      'ls-files',
+      '--stage',
+      '--full-name',
+      '-z',
+      '--',
+      ...deletedPaths,
+    ], repoRoot).split('\0').filter(Boolean);
 
     for (const entry of deletedEntries) {
       const separator = entry.indexOf('\t');
@@ -115,6 +146,9 @@ export function findGitMoveSource(
       }
       const header = entry.slice(0, separator);
       const deletedPath = entry.slice(separator + 1);
+      if (!deletedSet.has(deletedPath)) {
+        continue;
+      }
       const blobHash = /^\d+ ([0-9a-f]+) \d+$/.exec(header)?.[1];
       // Git cannot correlate an untracked destination by itself. Require the
       // same basename as corroborating evidence so an unrelated deleted file
@@ -122,7 +156,7 @@ export function findGitMoveSource(
       const sameBasename =
         path.posix.basename(deletedPath) === path.posix.basename(relativePath);
       if (sameBasename && blobHash === destinationHash) {
-        return path.join(repoRoot, ...deletedPath.split('/'));
+        return resolveWorkspaceSource(repoRoot, workspaceFolder, deletedPath);
       }
     }
   } catch {

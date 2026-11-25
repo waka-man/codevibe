@@ -154,12 +154,15 @@ describe('agentic file change detection (real git repo)', () => {
     expect(events).toHaveLength(0);
   });
 
-  it('does not flag a staged Git move', async () => {
+  it('does not flag a staged Git move alongside ordinary staged changes', async () => {
     const original = path.join(repo, 'tracked.ts');
     fs.writeFileSync(original, code(30, 'moved'));
+    fs.writeFileSync(path.join(repo, 'README.md'), 'before\n');
     execSync('git add -A', { cwd: repo });
     execSync('git commit -qm moved-file', { cwd: repo });
 
+    fs.writeFileSync(path.join(repo, 'README.md'), 'after\n');
+    execSync('git add README.md', { cwd: repo });
     const destinationDir = path.join(repo, 'public');
     fs.mkdirSync(destinationDir);
     execSync(`git mv tracked.ts ${path.join('public', 'tracked.ts')}`, { cwd: repo });
@@ -212,6 +215,21 @@ describe('agentic file change detection (real git repo)', () => {
     await fire(path.join('public assets', 'my file.ts'), true);
 
     expect(events).toHaveLength(0);
+  });
+
+  it('does not treat identical content as a move when the tracked source still exists', async () => {
+    const sourceDir = path.join(repo, 'lib');
+    fs.mkdirSync(sourceDir);
+    fs.writeFileSync(path.join(sourceDir, 'same.ts'), code(30, 'same'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm same-name-source', { cwd: repo });
+
+    fs.writeFileSync(path.join(repo, 'same.ts'), code(30, 'same'));
+
+    await fire('same.ts', true);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].detectionMethod).toBe('external-file-change');
   });
 
   it('does not treat identical content with a different basename as a move', async () => {
