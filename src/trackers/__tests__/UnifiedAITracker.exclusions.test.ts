@@ -464,6 +464,24 @@ describe('UnifiedAITracker file-system change handling', () => {
 
       expect(events).toHaveLength(0);
     });
+
+    it('tracks genuine closed-file edits after a completed export guard expires', async () => {
+      const outputPath = '/proj/submission/evidence.json';
+      const registration = registerGeneratedOutput(outputPath);
+      registration.complete();
+      jest.advanceTimersByTime(15_001);
+      await tracker.initialize();
+
+      await mockHandlers.fileChange!(uri(outputPath));
+      await new Promise((resolve) => setImmediate(resolve));
+      (vscode.workspace.openTextDocument as jest.Mock).mockResolvedValue(
+        doc(outputPath, Array(20).fill('x').join('\n')),
+      );
+      await mockHandlers.fileChange!(uri(outputPath));
+      await flushDebounce();
+
+      expect(events).toHaveLength(1);
+    });
   });
 
   describe('inactive open documents', () => {

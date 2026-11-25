@@ -713,6 +713,7 @@ export class MetricsCollector implements IMetricsCollector {
         await this.metricsRepo.recordEvent(
           event,
           this.getEffectiveExcludedGlobs(),
+          { generatedOutputApproved: true },
         );
       }
     } catch (error) {

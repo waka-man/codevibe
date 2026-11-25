@@ -1536,13 +1536,14 @@ async function registerCommands(
       try {
         const pdfBuffer = await new AssignmentPdfGenerator().generatePdfBuffer(report);
         const pdfUri = vscode.Uri.file(pdfPath);
-        const rollback = registerGeneratedOutput(pdfUri);
+        const registration = registerGeneratedOutput(pdfUri);
         try {
           await vscode.workspace.fs.writeFile(pdfUri, pdfBuffer as unknown as Uint8Array);
         } catch (error) {
-          rollback();
+          registration.rollback();
           throw error;
         }
+        registration.complete();
       } catch (error) {
         console.error("Failed to generate PDF report:", error);
         vscode.window.showWarningMessage(

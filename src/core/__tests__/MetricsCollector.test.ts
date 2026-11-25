@@ -8,6 +8,10 @@ import { MetricsRepository } from '../../storage/MetricsRepository';
 import { ConfigManager } from '../../config/ConfigManager';
 import { TrackingEvent, AITool, EventType, CodingSession, DailyMetrics, CodeSource } from '../../types';
 import { createMockDailyMetrics } from '../../__tests__/testUtils';
+import {
+  clearGeneratedOutputs,
+  registerGeneratedOutput,
+} from '../../utils/GeneratedOutputGuard';
 
 // Mock vscode module
 // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -51,6 +55,7 @@ describe('MetricsCollector', () => {
   let mockConfigManager: jest.Mocked<ConfigManager>;
 
   beforeEach(() => {
+    clearGeneratedOutputs();
     // Create mocks with proper typing
     mockMetricsRepo = {
       recordEvent: jest.fn<() => Promise<number>>().mockResolvedValue(1),
@@ -88,6 +93,7 @@ describe('MetricsCollector', () => {
 
   afterEach(async () => {
     await collector.dispose();
+    clearGeneratedOutputs();
     jest.clearAllTimers();
     jest.clearAllMocks();
   });
@@ -444,6 +450,28 @@ describe('MetricsCollector', () => {
       }
 
       expect(mockMetricsRepo.recordEvent).toHaveBeenCalledTimes(5);
+    });
+
+    it('does not re-filter an admitted event when an export registers before flush', async () => {
+      const event: TrackingEvent = {
+        timestamp: Date.now(),
+        tool: AITool.Copilot,
+        eventType: EventType.SuggestionDisplayed,
+        source: CodeSource.Manual,
+        filePath: '/repo/src/evidence.json',
+      };
+
+      (collector as any).handleEvent(event);
+      expect((collector as any).eventBuffer).toContain(event);
+      registerGeneratedOutput(event.filePath!);
+
+      await (collector as any).flushEventBuffer();
+
+      expect(mockMetricsRepo.recordEvent).toHaveBeenCalledWith(
+        event,
+        [],
+        { generatedOutputApproved: true },
+      );
     });
   });
 

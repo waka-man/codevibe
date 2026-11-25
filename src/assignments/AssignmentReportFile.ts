@@ -6,14 +6,15 @@ export async function writeAssignmentReport(
   target: any,
   report: AssignmentReport,
 ): Promise<void> {
-  const rollback = registerGeneratedOutput(target);
+  const registration = registerGeneratedOutput(target);
   try {
     await writeFile(
       target,
       Buffer.from(JSON.stringify(report, null, 2), "utf8"),
     );
   } catch (error) {
-    rollback();
+    registration.rollback();
     throw error;
   }
+  registration.complete();
 }

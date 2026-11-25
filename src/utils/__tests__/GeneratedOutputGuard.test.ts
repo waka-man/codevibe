@@ -6,7 +6,10 @@ import {
 
 describe('GeneratedOutputGuard', () => {
   beforeEach(() => clearGeneratedOutputs());
-  afterEach(() => clearGeneratedOutputs());
+  afterEach(() => {
+    clearGeneratedOutputs();
+    jest.useRealTimers();
+  });
 
   it('suppresses only an exact registered export destination', () => {
     const target = {
@@ -24,10 +27,10 @@ describe('GeneratedOutputGuard', () => {
   });
 
   it('rolls back registration when a write fails', () => {
-    const rollback = registerGeneratedOutput('/repo/submission/evidence.json');
+    const registration = registerGeneratedOutput('/repo/submission/evidence.json');
     expect(isGeneratedOutput('/repo/submission/evidence.json')).toBe(true);
 
-    rollback();
+    registration.rollback();
 
     expect(isGeneratedOutput('/repo/submission/evidence.json')).toBe(false);
   });
@@ -36,19 +39,44 @@ describe('GeneratedOutputGuard', () => {
     const first = registerGeneratedOutput('/repo/submission/evidence.json');
     const second = registerGeneratedOutput('/repo/submission/evidence.json');
 
-    first();
+    first.rollback();
     expect(isGeneratedOutput('/repo/submission/evidence.json')).toBe(true);
 
-    second();
+    second.rollback();
+    expect(isGeneratedOutput('/repo/submission/evidence.json')).toBe(false);
+  });
+
+  it('expires a completed write after the deferred watcher window', () => {
+    jest.useFakeTimers();
+    const registration = registerGeneratedOutput('/repo/submission/evidence.json');
+
+    registration.complete();
+    jest.advanceTimersByTime(5_000);
+    expect(isGeneratedOutput('/repo/submission/evidence.json')).toBe(true);
+
+    jest.advanceTimersByTime(10_001);
+    expect(isGeneratedOutput('/repo/submission/evidence.json')).toBe(false);
+  });
+
+  it('does not expire an overlapping write that is still in progress', () => {
+    jest.useFakeTimers();
+    const first = registerGeneratedOutput('/repo/submission/evidence.json');
+    const second = registerGeneratedOutput('/repo/submission/evidence.json');
+
+    first.complete();
+    jest.advanceTimersByTime(30_000);
+    expect(isGeneratedOutput('/repo/submission/evidence.json')).toBe(true);
+
+    second.rollback();
     expect(isGeneratedOutput('/repo/submission/evidence.json')).toBe(false);
   });
 
   it('does not let a stale rollback remove a newer registration', () => {
-    const staleRollback = registerGeneratedOutput('/repo/submission/evidence.json');
+    const stale = registerGeneratedOutput('/repo/submission/evidence.json');
     clearGeneratedOutputs();
     registerGeneratedOutput('/repo/submission/evidence.json');
 
-    staleRollback();
+    stale.rollback();
 
     expect(isGeneratedOutput('/repo/submission/evidence.json')).toBe(true);
   });

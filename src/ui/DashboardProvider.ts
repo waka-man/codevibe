@@ -682,13 +682,14 @@ export class DashboardProvider implements vscode.WebviewViewProvider {
       });
 
       if (uri) {
-        const rollback = registerGeneratedOutput(uri);
+        const registration = registerGeneratedOutput(uri);
         try {
           await vscode.workspace.fs.writeFile(uri, Buffer.from(json, "utf8"));
         } catch (error) {
-          rollback();
+          registration.rollback();
           throw error;
         }
+        registration.complete();
         vscode.window.showInformationMessage(
           "Dashboard data exported successfully",
         );

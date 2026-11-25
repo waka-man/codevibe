@@ -60,12 +60,15 @@ export class MetricsRepository {
   async recordEvent(
     event: TrackingEvent,
     extraGlobs: readonly string[] = [],
+    options: { generatedOutputApproved?: boolean } = {},
   ): Promise<number> {
     // Last line of defence: generated/dependency paths (node_modules, build
     // output, ...) are never stored, whichever code path produced the event.
+    // Buffered events already passed collector ingestion; a later export to the
+    // same path must not retroactively discard that admitted source evidence.
     if (
       event.filePath &&
-      (isGeneratedOutput(event.filePath) ||
+      ((!options.generatedOutputApproved && isGeneratedOutput(event.filePath)) ||
         isExcludedFile(event.filePath, extraGlobs))
     ) {
       return 0;

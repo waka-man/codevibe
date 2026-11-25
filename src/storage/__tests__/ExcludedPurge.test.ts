@@ -125,6 +125,19 @@ describe("Excluded-path purge", () => {
     expect(reviews.map((r) => r.filePath)).toEqual(["/proj/src/app.ts"]);
   });
 
+  it("persists already-approved events when a path is registered before persistence", async () => {
+    const outputPath = "/proj/submission/evidence.json";
+    const event = makeEvent(outputPath, 5);
+    registerGeneratedOutput(outputPath);
+
+    expect(
+      await metricsRepo.recordEvent(event, [], {
+        generatedOutputApproved: true,
+      }),
+    ).toBe(1);
+    expect(await dbManager.getRecentEvents(100)).toHaveLength(1);
+  });
+
   it("runtime output registrations block new writes but never authorize historical purges", async () => {
     const outputPath = "/proj/submission/evidence.json";
     await dbManager.insertEvent(makeEvent(outputPath, 500));
