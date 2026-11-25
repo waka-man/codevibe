@@ -103,17 +103,26 @@ export function findGitMoveSource(
       // Destination is not staged.
     }
     if (stagedHash === destinationHash) {
-      const stagedDeletedPaths = git(workspaceFolder, [
+      // Raw deletion records include the old blob hash, so bulk staged moves
+      // need one Git process rather than one `rev-parse` per deleted source.
+      const rawDeletions = git(workspaceFolder, [
         'diff',
         '--cached',
+        '--raw',
+        '--abbrev=40',
         '--no-renames',
-        '--name-only',
         '--diff-filter=D',
         '-z',
         'HEAD',
         '--',
       ]).split('\0').filter(Boolean);
-      for (const sourcePath of stagedDeletedPaths) {
+      for (let i = 0; i + 1 < rawDeletions.length; i += 2) {
+        const header = rawDeletions[i];
+        const sourcePath = rawDeletions[i + 1];
+        const sourceHash = /^:\d+ \d+ ([0-9a-f]+) 0+ D$/.exec(header)?.[1];
+        if (sourceHash !== destinationHash) {
+          continue;
+        }
         const sourceAbsolutePath = resolveWorkspaceSource(
           workspaceFolder,
           workspaceRepoPath,
@@ -132,17 +141,7 @@ export function findGitMoveSource(
             continue;
           }
         }
-        try {
-          const sourceHash = git(workspaceFolder, [
-            'rev-parse',
-            `HEAD:${sourcePath}`,
-          ]).trim();
-          if (sourceHash === destinationHash) {
-            return sourceAbsolutePath;
-          }
-        } catch {
-          // A staged addition may not exist in HEAD; it is not a move source.
-        }
+        return sourceAbsolutePath;
       }
     }
 

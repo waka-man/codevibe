@@ -185,6 +185,28 @@ describe('agentic file change detection (real git repo)', () => {
     expect(events).toHaveLength(0);
   });
 
+  it('handles bulk staged moves with unique content', async () => {
+    const sources: string[] = [];
+    for (let i = 0; i < 250; i++) {
+      const source = path.join(repo, `file-${i}.ts`);
+      fs.writeFileSync(source, code(3, `file${i}`));
+      sources.push(source);
+    }
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm bulk-staged-moves', { cwd: repo });
+
+    const destinationDir = path.join(repo, 'moved');
+    fs.mkdirSync(destinationDir);
+    for (const source of sources) {
+      fs.renameSync(source, path.join(destinationDir, path.basename(source)));
+    }
+    execSync('git add -A', { cwd: repo });
+
+    await fire(path.join('moved', 'file-249.ts'), true);
+
+    expect(events).toHaveLength(0);
+  });
+
   it('does not treat git rm --cached plus an identical staged file as a move', async () => {
     const sourceDir = path.join(repo, 'lib');
     fs.mkdirSync(sourceDir);
