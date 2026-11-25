@@ -154,6 +154,76 @@ describe('agentic file change detection (real git repo)', () => {
     expect(events).toHaveLength(0);
   });
 
+  it('does not flag a staged Git move', async () => {
+    const original = path.join(repo, 'tracked.ts');
+    fs.writeFileSync(original, code(30, 'moved'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm moved-file', { cwd: repo });
+
+    const destinationDir = path.join(repo, 'public');
+    fs.mkdirSync(destinationDir);
+    execSync(`git mv tracked.ts ${path.join('public', 'tracked.ts')}`, { cwd: repo });
+
+    await fire(path.join('public', 'tracked.ts'), true);
+
+    expect(events).toHaveLength(0);
+  });
+
+  it('detects a pure move when the workspace is a repository subdirectory', async () => {
+    const workspace = path.join(repo, 'sub');
+    fs.mkdirSync(workspace);
+    const original = path.join(workspace, 'tracked.ts');
+    fs.writeFileSync(original, code(30, 'moved'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm moved-file', { cwd: repo });
+
+    const destinationDir = path.join(workspace, 'public');
+    fs.mkdirSync(destinationDir);
+    const destination = path.join(destinationDir, 'tracked.ts');
+    fs.renameSync(original, destination);
+
+    const vscode = require('vscode');
+    vscode.workspace.workspaceFolders = [{ uri: { fsPath: workspace }, name: 'sub' }];
+    vscode.workspace.getWorkspaceFolder = () => ({ uri: { fsPath: workspace }, name: 'sub' });
+    await (tracker as any).processFileChange(
+      { fsPath: destination, scheme: 'file' },
+      destination,
+      true,
+    );
+
+    expect(events).toHaveLength(0);
+  });
+
+  it('handles pure moves with spaces in the file path', async () => {
+    const original = path.join(repo, 'my file.ts');
+    fs.writeFileSync(original, code(30, 'moved'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm moved-file', { cwd: repo });
+
+    const destinationDir = path.join(repo, 'public assets');
+    fs.mkdirSync(destinationDir);
+    fs.renameSync(original, path.join(destinationDir, 'my file.ts'));
+
+    await fire(path.join('public assets', 'my file.ts'), true);
+
+    expect(events).toHaveLength(0);
+  });
+
+  it('does not treat identical content with a different basename as a move', async () => {
+    const original = path.join(repo, 'seed.txt');
+    fs.writeFileSync(original, code(30, 'seed'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm seed', { cwd: repo });
+
+    fs.rmSync(original);
+    fs.writeFileSync(path.join(repo, 'src.ts'), code(30, 'seed'));
+
+    await fire('src.ts', true);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].detectionMethod).toBe('external-file-change');
+  });
+
   it('still flags a moved file when its content changed after the move', async () => {
     const original = path.join(repo, 'tracked.ts');
     fs.writeFileSync(original, code(10, 'moved'));

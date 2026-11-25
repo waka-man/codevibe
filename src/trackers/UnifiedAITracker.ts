@@ -986,6 +986,27 @@ export class UnifiedAITracker extends BaseTracker {
               this.log(`[PROCESS-CHANGE] Git operation in progress or just finished (pull/checkout/merge/rebase/stash), will skip AI detection`);
               isGitOperation = true;
             } else {
+              if (newlyCreated) {
+                // A move can be unstaged (deleted source + untracked
+                // destination) or staged (rename visible only in the index).
+                // Check before the path-scoped diff, which can misread either
+                // case as a brand-new file.
+                const movedFrom = findGitMoveSource(workspaceFolder, filePath);
+                if (movedFrom !== null) {
+                  this.log(`[PROCESS-CHANGE] SKIPPED - pure Git move from ${movedFrom}: ${fileName}`);
+                  const sourcePath = path.join(
+                    workspaceFolder,
+                    ...movedFrom.split('/'),
+                  );
+                  this.fileBaselines.delete(sourcePath);
+                  this.cumulativeAILines.delete(sourcePath);
+                  this.fileBaselines.set(filePath, currentLineCount);
+                  this.cumulativeAILines.set(filePath, 0);
+                  this.savePersistedBaselines();
+                  return;
+                }
+              }
+
               const diffResult = String(execSync(`git diff HEAD --numstat -- "${relativePath}"`, {
                 cwd: workspaceFolder,
                 encoding: 'utf-8',
@@ -1008,18 +1029,6 @@ export class UnifiedAITracker extends BaseTracker {
                   this.log(`[PROCESS-CHANGE] File tracked with no diff vs HEAD - git operation detected (pull/merge/etc), will skip AI detection`);
                   isGitOperation = true;
                 } catch {
-                  // A VS Code move appears as a deleted tracked source plus an
-                  // untracked destination. If the committed content is
-                  // identical, this is a file operation, not new AI output.
-                  const movedFrom = findGitMoveSource(workspaceFolder, filePath);
-                  if (movedFrom !== null) {
-                    this.log(`[PROCESS-CHANGE] SKIPPED - pure Git move from ${movedFrom}: ${fileName}`);
-                    this.fileBaselines.set(filePath, currentLineCount);
-                    this.cumulativeAILines.set(filePath, 0);
-                    this.savePersistedBaselines();
-                    return;
-                  }
-
                   // New untracked file - use current line count. Do not use
                   // .gitignore as an AI exemption: students can edit it, and
                   // it commonly covers source and local configuration too.
