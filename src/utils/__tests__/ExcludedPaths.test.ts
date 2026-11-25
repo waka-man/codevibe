@@ -111,6 +111,77 @@ describe('ExcludedPaths', () => {
     });
   });
 
+  // Issue #36: globs entered as the reporter did never matched, because they
+  // were compared against the whole absolute path.
+  describe('matchExclusionGlob - project-relative user globs (#36)', () => {
+    const file = '/Users/dev/web-infra/.svelte-kit/generated/client/app.js';
+
+    it.each(['.svelte-kit', '/.svelte-kit', './.svelte-kit/', '.svelte-kit/**', '**/.svelte-kit/**'])(
+      '"%s" excludes files under .svelte-kit',
+      (glob) => {
+        expect(matchExclusionGlob(file, glob)).toBe(true);
+        expect(matchExclusionGlob('C:\\web-infra\\.svelte-kit\\types\\x.d.ts', glob)).toBe(true);
+        expect(matchExclusionGlob('.svelte-kit/output/a.js', glob)).toBe(true);
+      },
+    );
+
+    it('matches at segment boundaries only', () => {
+      expect(matchExclusionGlob('/proj/my.svelte-kit-notes/a.ts', '.svelte-kit')).toBe(false);
+      expect(matchExclusionGlob('/proj/src/routes/+page.svelte', '.svelte-kit')).toBe(false);
+    });
+
+    it('supports relative sub-paths and file patterns', () => {
+      expect(matchExclusionGlob('/proj/src/generated/api.ts', 'src/generated/**')).toBe(true);
+      expect(matchExclusionGlob('/proj/src/app.ts', 'src/generated/**')).toBe(false);
+      expect(matchExclusionGlob('/proj/logs/today.log', '*.log')).toBe(true);
+      expect(matchExclusionGlob('/proj/src/a.ts', '*.log')).toBe(false);
+    });
+
+    it('treats regex characters in globs literally', () => {
+      expect(matchExclusionGlob('/proj/src/routes/+page.svelte', 'routes/+page.svelte')).toBe(true);
+      expect(matchExclusionGlob('/proj/src/routes/xpage.svelte', 'routes/+page.svelte')).toBe(false);
+      expect(matchExclusionGlob('/proj/a.b/c.ts', 'a.b')).toBe(true);
+      expect(matchExclusionGlob('/proj/axb/c.ts', 'a.b')).toBe(false);
+    });
+  });
+
+  describe('validateCustomExclusions - multi-pattern entries (#36)', () => {
+    it('splits one entry holding several space- or comma-separated globs', () => {
+      const { valid } = validateCustomExclusions(['.svelte-kit/** build/** dist/**', 'a/**, b/**']);
+      expect(valid).toEqual(['.svelte-kit/**', 'build/**', 'dist/**', 'a/**', 'b/**']);
+    });
+
+    it.each(['/**', './**/', '/', '**/*/', './*'])('rejects universe pattern "%s"', (glob) => {
+      const { valid, rejected } = validateCustomExclusions([glob]);
+      expect(valid).toEqual([]);
+      expect(rejected[0].reason).toMatch(/matches everything/);
+    });
+  });
+
+  describe('framework build caches (#35)', () => {
+    it.each([
+      '/proj/.svelte-kit/generated/client/nodes/2.js',
+      '/proj/.vite/deps/chunk.js',
+      '/proj/.turbo/cache/x.json',
+      '/proj/.angular/cache/x.js',
+      '/proj/.output/server/index.mjs',
+      '/proj/.astro/types.d.ts',
+    ])('excludes %s by default', (p) => {
+      expect(isExcludedFile(p)).toBe(true);
+    });
+
+    it('mirrors the new segments in DEFAULT_EXCLUDED_GLOBS', () => {
+      expect(DEFAULT_EXCLUDED_GLOBS).toContain('**/.svelte-kit/**');
+    });
+  });
+
+  // Issue #37: pnpm's virtual store
+  it('excludes pnpm virtual-store paths', () => {
+    expect(
+      isExcludedFile('/Users/dev/web-infra/node_modules/.pnpm/@sveltejs+kit@2.5.0/node_modules/vite/bin/vite.js'),
+    ).toBe(true);
+  });
+
   describe('DEFAULT_EXCLUDED_GLOBS', () => {
     it('covers node_modules, venv variants, and build outputs', () => {
       const globs = [...DEFAULT_EXCLUDED_GLOBS];

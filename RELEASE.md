@@ -15,6 +15,22 @@ No manual version bump in `package.json`, no manual tags, no manual releases.
 
 ---
 
+## 0.1.20
+
+- Fix manual edits being counted as AI authorship in assignment reports
+
+Editor-assisted edits (deletions, undo/redo, Emmet-style insertions, cut-and-paste between files) were classified as flagged AI lines, so purely manual work could show an inflated AI authorship percentage, an ownership score of 0.0, and spurious authorship/ownership violations.
+
+What changed: these edits are now permitted and excluded from authorship line totals (neither AI nor manual), matching the dashboard. They are deliberately not counted as manual, so deleting and undoing AI code cannot dilute the AI percentage. The leading tracking gap is now measured from when the assignment was created, so time before it existed is no longer flagged as "no tracking activity". Ownership defaults to 100 only when there are no AI-flagged files to review; reviewed files still contribute their actual review-quality score.
+
+- Stop flagging tool-generated files as AI and make excluded globs work
+
+Files written by development tooling were reported as AI agent output. Framework dev-server and build caches (`.svelte-kit`, `.vite`, `.turbo`, `.angular`, `.output`, `.astro` and others) are now ignored by default. Newly created files written while a simple project scaffolder runs in the VS Code terminal (`npx sv create`, `npm create vite`, `ng new`, ...) are attributed to the tool only inside the parsed target directory and for a bounded time. Compound commands and edits to existing files are never suppressed. Scaffolder detection needs VS Code terminal shell integration; `.gitignore` alone is not trusted as an AI exemption because students can edit it.
+
+`codePause.excludedGlobs` now accepts project-relative patterns such as `.svelte-kit`, `/.svelte-kit` or `src/generated/**`; previously they were compared against the full absolute path and never matched. One entry holding several patterns (`a/** b/**`) is split. Changing the setting applies immediately and removes already-recorded rows under those paths, but never events that belong to an assignment.
+
+Dependency and generated paths (including pnpm's `node_modules/.pnpm` store) are now also filtered at the storage layer and in the review list, so they cannot appear on the dashboard through any code path.
+
 ## 0.1.19
 
 - Fix PDF export failing in the installed extension

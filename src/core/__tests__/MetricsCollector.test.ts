@@ -57,7 +57,16 @@ describe('MetricsCollector', () => {
       getDailyMetrics: jest.fn<() => Promise<DailyMetrics | null>>().mockResolvedValue(null),
       saveSession: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
       calculateDailyMetrics: jest.fn<() => Promise<DailyMetrics>>().mockResolvedValue(createMockDailyMetrics()),
-      saveFileReviewStatus: jest.fn<() => Promise<void>>().mockResolvedValue(undefined)
+      saveFileReviewStatus: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      purgeExcludedEvents: jest.fn<() => Promise<{
+        eventsDeleted: number;
+        fileReviewsDeleted: number;
+        datesRecalculated: string[];
+      }>>().mockResolvedValue({
+        eventsDeleted: 0,
+        fileReviewsDeleted: 0,
+        datesRecalculated: [],
+      })
     } as unknown as jest.Mocked<MetricsRepository>;
 
     mockConfigManager = {
@@ -113,6 +122,89 @@ describe('MetricsCollector', () => {
     });
   });
 
+  describe('Exclusion settings', () => {
+    it('evicts purged review caches so excluded rows cannot be resurrected', async () => {
+      const excludedPath = '/repo/src/generated/types.ts';
+      const config = mockConfigManager.getConfig();
+      mockConfigManager.getConfig.mockReturnValue({
+        ...config,
+        excludedGlobs: ['src/generated/**'],
+      });
+      const sessionTracker = (collector as any).fileReviewSessionTracker;
+      const reviewTracker = (collector as any).fileReviewTracker;
+      sessionTracker.startTracking(excludedPath, AITool.Cursor, 'session-1', 10);
+      reviewTracker.trackFile({
+        filePath: excludedPath,
+        date: '2026-01-01',
+        tool: AITool.Cursor,
+      });
+
+      await collector.applyExclusionSettings();
+
+      expect(sessionTracker.getAllSessions()).toEqual([]);
+      expect(reviewTracker.queryFiles()).toEqual([]);
+
+      // Narrowing the setting later must not bring the purged cache entries back.
+      mockConfigManager.getConfig.mockReturnValue({ ...config, excludedGlobs: [] });
+      await collector.applyExclusionSettings(true);
+      expect(sessionTracker.getAllSessions()).toEqual([]);
+      expect(reviewTracker.queryFiles()).toEqual([]);
+    });
+
+    it('evicts the purged glob snapshot when settings change mid-purge', async () => {
+      const excludedPath = '/repo/src/generated/types.ts';
+      const config = mockConfigManager.getConfig();
+      mockConfigManager.getConfig.mockReturnValue({
+        ...config,
+        excludedGlobs: ['src/generated/**'],
+      });
+      let finishPurge: (value: {
+        eventsDeleted: number;
+        fileReviewsDeleted: number;
+        datesRecalculated: string[];
+      }) => void = () => undefined;
+      mockMetricsRepo.purgeExcludedEvents.mockImplementation(
+        () => new Promise((resolve) => { finishPurge = resolve; }),
+      );
+      const sessionTracker = (collector as any).fileReviewSessionTracker;
+      const reviewTracker = (collector as any).fileReviewTracker;
+      sessionTracker.startTracking(excludedPath, AITool.Cursor, 'session-1', 10);
+      reviewTracker.trackFile({
+        filePath: excludedPath,
+        date: '2026-01-01',
+        tool: AITool.Cursor,
+      });
+
+      const pending = collector.applyExclusionSettings();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(mockMetricsRepo.purgeExcludedEvents).toHaveBeenCalled();
+
+      mockConfigManager.getConfig.mockReturnValue({ ...config, excludedGlobs: [] });
+      finishPurge({ eventsDeleted: 1, fileReviewsDeleted: 1, datesRecalculated: [] });
+      await pending;
+
+      expect(sessionTracker.getAllSessions()).toEqual([]);
+      expect(reviewTracker.queryFiles()).toEqual([]);
+    });
+
+    it('purges built-in excluded rows on startup even without custom globs', async () => {
+      mockMetricsRepo.purgeExcludedEvents.mockResolvedValue({
+        eventsDeleted: 2,
+        fileReviewsDeleted: 1,
+        datesRecalculated: ['2026-01-01'],
+      });
+
+      const removed = await collector.applyExclusionSettings(true);
+
+      expect(mockMetricsRepo.purgeExcludedEvents).toHaveBeenCalledWith([], {
+        preserveAssignmentEvents: true,
+        isCancelled: expect.any(Function),
+      });
+      expect(removed).toBe(3);
+    });
+  });
+
   describe('Event Handling', () => {
     beforeEach(async () => {
       await collector.initialize();
@@ -128,7 +220,7 @@ describe('MetricsCollector', () => {
 
       await collector.recordEvent(event);
 
-      expect(mockMetricsRepo.recordEvent).toHaveBeenCalledWith(event);
+      expect(mockMetricsRepo.recordEvent).toHaveBeenCalledWith(event, []);
     });
 
     it('should handle suggestion displayed event', async () => {
@@ -436,7 +528,7 @@ describe('MetricsCollector', () => {
 
       await collector.recordEvent(event);
 
-      expect(mockMetricsRepo.recordEvent).toHaveBeenCalledWith(event);
+      expect(mockMetricsRepo.recordEvent).toHaveBeenCalledWith(event, []);
     });
 
     it('should save session through repository', async () => {

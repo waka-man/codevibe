@@ -12,6 +12,7 @@ import { MetricsRepository } from "../MetricsRepository";
 import {
   TrackingEvent,
   FileReviewStatus,
+  Assignment,
   AITool,
   EventType,
   CodeSource,
@@ -151,6 +152,125 @@ describe("Excluded-path purge", () => {
     expect(result.eventsDeleted).toBe(1);
     const remaining = await dbManager.getRecentEvents(100);
     expect(remaining.map((e) => e.filePath)).toEqual(["/proj/src/app.ts"]);
+  });
+
+  it("user globs never purge events that belong to an assignment", async () => {
+    await dbManager.insertEvent({
+      ...makeEvent("/proj/src/graded.ts", 40),
+      assignmentId: "assignment-1",
+    });
+    await dbManager.insertEvent({
+      ...makeEvent("/proj/node_modules/pkg/index.js", 100),
+      assignmentId: "assignment-1",
+    });
+    await dbManager.insertEvent(makeEvent("/proj/src/scratch.ts", 5));
+
+    const result = await metricsRepo.purgeExcludedEvents(["src/**"], {
+      preserveAssignmentEvents: true,
+    });
+
+    // scratch.ts (no assignment) and the built-in node_modules row go;
+    // the assignment's source event stays as evidence.
+    expect(result.eventsDeleted).toBe(2);
+    const remaining = await dbManager.getRecentEvents(100);
+    expect(remaining.map((e) => e.filePath)).toEqual(["/proj/src/graded.ts"]);
+  });
+
+  it("preserves untagged assignment-window events and their reviews from user globs", async () => {
+    const assignment: Assignment = {
+      id: "assignment-window-1",
+      name: "Windowed assignment",
+      startDate: today,
+      endDate: today,
+      createdAt: Date.now() - 60_000,
+      updatedAt: Date.now(),
+      isActive: false,
+      policy: {} as Assignment["policy"],
+    };
+    await dbManager.insertOrUpdateAssignment(assignment);
+    await dbManager.insertEvent(makeEvent("/proj/src/graded.ts", 40));
+    await dbManager.insertOrUpdateFileReviewStatus(
+      makeReview("/proj/src/graded.ts", 40),
+    );
+
+    const result = await metricsRepo.purgeExcludedEvents(["src/**"], {
+      preserveAssignmentEvents: true,
+    });
+
+    expect(result.eventsDeleted).toBe(0);
+    expect(result.fileReviewsDeleted).toBe(0);
+    const remaining = await dbManager.getRecentEvents(100);
+    expect(remaining.map((e) => e.filePath)).toEqual(["/proj/src/graded.ts"]);
+    const reviews = await dbManager.getFileReviewsForDate(today);
+    expect(reviews.map((review) => review.filePath)).toEqual([
+      "/proj/src/graded.ts",
+    ]);
+  });
+
+  it("preserves reviews for tagged assignment events outside the date window", async () => {
+    const oldDate = "2020-01-01";
+    await dbManager.insertEvent({
+      ...makeEvent("/proj/src/graded.ts", 40),
+      assignmentId: "assignment-outside-window",
+      timestamp: new Date(`${oldDate}T12:00:00Z`).getTime(),
+    });
+    await dbManager.insertOrUpdateFileReviewStatus({
+      ...makeReview("/proj/src/graded.ts", 40),
+      date: oldDate,
+    });
+
+    const result = await metricsRepo.purgeExcludedEvents(["src/**"], {
+      preserveAssignmentEvents: true,
+    });
+
+    expect(result.eventsDeleted).toBe(0);
+    expect(result.fileReviewsDeleted).toBe(0);
+    expect(await dbManager.getRecentEvents(100)).toHaveLength(1);
+    expect(await dbManager.getFileReviewsForDate(oldDate)).toHaveLength(1);
+  });
+
+  it("cancels a queued purge before deleting when exclusions change", async () => {
+    await dbManager.insertEvent(makeEvent("/proj/src/scratch.ts", 5));
+
+    const result = await metricsRepo.purgeExcludedEvents(["src/**"], {
+      isCancelled: () => true,
+    });
+
+    expect(result.eventsDeleted).toBe(0);
+    expect(result.fileReviewsDeleted).toBe(0);
+    expect(await dbManager.getRecentEvents(100)).toHaveLength(1);
+  });
+
+  it("never stores or lists excluded paths via the repository (#37)", async () => {
+    const pnpmFile = "/proj/node_modules/.pnpm/vite@5/node_modules/vite/bin/vite.js";
+    await metricsRepo.recordEvent(makeEvent(pnpmFile, 90));
+    await metricsRepo.saveFileReviewStatus(makeReview(pnpmFile, 90));
+    // A row written before the guard existed must still not be listed
+    await dbManager.insertOrUpdateFileReviewStatus(
+      makeReview("/proj/.svelte-kit/generated/root.js", 30),
+    );
+    await metricsRepo.saveFileReviewStatus(makeReview("/proj/src/app.ts", 10));
+
+    expect(await dbManager.getRecentEvents(100)).toEqual([]);
+    const unreviewed = await metricsRepo.getUnreviewedFiles(today);
+    expect(unreviewed.map((f: any) => f.filePath)).toEqual(["/proj/src/app.ts"]);
+  });
+
+  it("does not re-store custom-excluded events or review rows", async () => {
+    const eventPath = "/proj/src/generated/types.ts";
+    const reviewPath = "/proj/src/generated/review.ts";
+
+    expect(
+      await metricsRepo.recordEvent(makeEvent(eventPath, 20), [
+        "src/generated/**",
+      ]),
+    ).toBe(0);
+    await metricsRepo.saveFileReviewStatus(makeReview(reviewPath, 20), [
+      "src/generated/**",
+    ]);
+
+    expect(await dbManager.getRecentEvents(100)).toEqual([]);
+    expect(await dbManager.getFileReviewsForDate(today)).toEqual([]);
   });
 
   it("records and retrieves the exclusion audit trail", async () => {

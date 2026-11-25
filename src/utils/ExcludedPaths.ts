@@ -45,6 +45,23 @@ export const DEFAULT_EXCLUDED_DIR_SEGMENTS: readonly string[] = [
   '.nyc_output',
   '.next',
   '.nuxt',
+  // Framework dev-server / build caches (regenerated on every `dev`/`build`)
+  '.svelte-kit',
+  '.vite',
+  '.turbo',
+  '.angular',
+  '.output',
+  '.vercel',
+  '.netlify',
+  '.parcel-cache',
+  '.astro',
+  '.docusaurus',
+  '.expo',
+  '.nx',
+  '.cache',
+  '.gradle',
+  '.dart_tool',
+  '.pnpm-store',
   'target',
   'vendor',
   // IDE / editor metadata
@@ -130,6 +147,22 @@ export const DEFAULT_EXCLUDED_GLOBS: readonly string[] = [
   '**/.nyc_output/**',
   '**/.next/**',
   '**/.nuxt/**',
+  '**/.svelte-kit/**',
+  '**/.vite/**',
+  '**/.turbo/**',
+  '**/.angular/**',
+  '**/.output/**',
+  '**/.vercel/**',
+  '**/.netlify/**',
+  '**/.parcel-cache/**',
+  '**/.astro/**',
+  '**/.docusaurus/**',
+  '**/.expo/**',
+  '**/.nx/**',
+  '**/.cache/**',
+  '**/.gradle/**',
+  '**/.dart_tool/**',
+  '**/.pnpm-store/**',
   '**/target/**',
   '**/vendor/**',
   '**/.idea/**',
@@ -183,21 +216,37 @@ export function isExcludedBySegment(
 }
 
 /**
- * Minimal glob matcher supporting `**`, `*`, `?` (same semantics as
- * PolicyEngine/AssignmentManager). Used for user-supplied extra globs.
+ * Glob matcher for user-supplied exclusions (`codePause.excludedGlobs`).
+ * Supports `**`, `*` and `?`, case-insensitive.
+ *
+ * Users write globs relative to their project, so a pattern is matched at
+ * any path-segment boundary rather than against the whole absolute path:
+ * `.svelte-kit`, `/.svelte-kit`, `./.svelte-kit/` and `.svelte-kit/**` all
+ * exclude everything under a `.svelte-kit` folder. A pattern naming a
+ * folder also excludes that folder's contents.
+ * Anchoring to the full absolute path made relative globs never match.
  */
 export function matchExclusionGlob(filePath: string, glob: string): boolean {
   const normalizedPath = normalizePathForExclusion(filePath);
-  const normalizedGlob = glob.replace(/\\/g, '/').toLowerCase();
-  const regex = new RegExp(
-    '^' +
-      normalizedGlob
-        .replace(/\*\*/g, '<<<ANYDEPTH>>>')
-        .replace(/\*/g, '[^/]*')
-        .replace(/<<<ANYDEPTH>>>/g, '.*')
-        .replace(/\?/g, '.') +
-      '$'
-  );
+  let normalizedGlob = glob.trim().replace(/\\/g, '/').toLowerCase();
+  // Leading "./" or "/" means "from the project root"; stored and watched
+  // paths may be absolute or workspace-relative, so match at a boundary.
+  normalizedGlob = normalizedGlob.replace(/^(\.\/)+/, '').replace(/^\/+/, '');
+  normalizedGlob = normalizedGlob.replace(/\/+$/, '');
+  if (!normalizedPath || !normalizedGlob) {
+    return false;
+  }
+  const body = normalizedGlob
+    .split(/(\*\*\/?|\*|\?)/)
+    .map((part) => {
+      if (part === '**/') {return '(?:.*/)?';}
+      if (part === '**') {return '.*';}
+      if (part === '*') {return '[^/]*';}
+      if (part === '?') {return '[^/]';}
+      return part.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+    })
+    .join('');
+  const regex = new RegExp('(?:^|/)' + body + '(?:/.*)?$');
   return regex.test(normalizedPath);
 }
 
@@ -292,8 +341,19 @@ export function validateCustomExclusions(
     return { valid, rejected };
   }
 
-  const seen = new Set<string>();
+  // One settings entry may hold several patterns ("a/** b/**" or "a, b");
+  // the VS Code list editor makes that an easy mistake. Split them.
+  const expanded: unknown[] = [];
   for (const raw of globs) {
+    if (typeof raw === 'string' && raw.trim() !== '') {
+      expanded.push(...raw.split(/[\s,]+/).filter(Boolean));
+    } else {
+      expanded.push(raw);
+    }
+  }
+
+  const seen = new Set<string>();
+  for (const raw of expanded) {
     if (typeof raw !== 'string' || raw.trim() === '') {
       rejected.push({ glob: String(raw), reason: 'empty exclusion' });
       continue;
@@ -307,7 +367,12 @@ export function validateCustomExclusions(
     }
     seen.add(normalized);
 
-    if (BLOCKED_UNIVERSE_PATTERNS.includes(normalized)) {
+    const rootless = normalized.replace(/^(\.\/)+/, '').replace(/^\/+/, '').replace(/\/+$/, '');
+    if (
+      BLOCKED_UNIVERSE_PATTERNS.includes(normalized) ||
+      rootless === '' ||
+      /^[*/]+$/.test(rootless)
+    ) {
       rejected.push({ glob, reason: 'matches everything - not a valid exclusion' });
       continue;
     }

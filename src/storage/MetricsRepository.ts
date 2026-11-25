@@ -56,7 +56,15 @@ export class MetricsRepository {
     }
   }
 
-  async recordEvent(event: TrackingEvent): Promise<number> {
+  async recordEvent(
+    event: TrackingEvent,
+    extraGlobs: readonly string[] = [],
+  ): Promise<number> {
+    // Last line of defence: generated/dependency paths (node_modules, build
+    // output, ...) are never stored, whichever code path produced the event.
+    if (event.filePath && isExcludedFile(event.filePath, extraGlobs)) {
+      return 0;
+    }
     return await this.db.insertEvent(event);
   }
 
@@ -69,35 +77,96 @@ export class MetricsRepository {
    * metrics for every affected date so dashboard numbers recover.
    * Built-in defaults always apply; extraGlobs extends them.
    */
-  async purgeExcludedEvents(extraGlobs: string[] = []): Promise<{
+  async purgeExcludedEvents(
+    extraGlobs: string[] = [],
+    options: {
+      preserveAssignmentEvents?: boolean;
+      isCancelled?: () => boolean;
+    } = {},
+  ): Promise<{
     eventsDeleted: number;
     fileReviewsDeleted: number;
     datesRecalculated: string[];
   }> {
     const affectedDates = new Set<string>();
 
+    // Assignment reports include explicitly tagged events plus untagged
+    // events recorded inside the assignment window. User-supplied globs must
+    // never erase either kind of source evidence, or the matching review
+    // history. Built-in generated/dependency paths remain safe to purge.
+    const assignmentWindows = options.preserveAssignmentEvents
+      ? (await this.db.getAssignments()).map((assignment) => ({
+          startDate: assignment.startDate,
+          endDate: assignment.endDate,
+        }))
+      : [];
+    const isInAssignmentWindow = (timestamp: number): boolean =>
+      assignmentWindows.some(({ startDate, endDate }) => {
+        const date = toLocalDateString(timestamp);
+        return date >= startDate && date <= endDate;
+      });
+    const isAssignmentReviewDate = (date: string): boolean =>
+      assignmentWindows.some(
+        ({ startDate, endDate }) => date >= startDate && date <= endDate,
+      );
+
     const events = await this.db.getAllEventPaths();
     const excludedEventIds: number[] = [];
     for (const event of events) {
+      const builtInExcluded = event.file_path
+        ? isExcludedFile(event.file_path)
+        : false;
+      const belongsToAssignment =
+        event.assignment_id !== null ||
+        (event.assignment_id === null && isInAssignmentWindow(event.timestamp));
+      if (
+        options.preserveAssignmentEvents &&
+        belongsToAssignment &&
+        !builtInExcluded
+      ) {
+        continue;
+      }
       if (event.file_path && isExcludedFile(event.file_path, extraGlobs)) {
         excludedEventIds.push(event.id);
-        affectedDates.add(
-          toLocalDateString(event.timestamp),
-        );
+        affectedDates.add(toLocalDateString(event.timestamp));
       }
     }
+    if (options.isCancelled?.()) {
+      return { eventsDeleted: 0, fileReviewsDeleted: 0, datesRecalculated: [] };
+    }
+
+    const taggedAssignmentReviewKeys = new Set(
+      events
+        .filter((event) => event.assignment_id !== null && event.file_path)
+        .map((event) => `${event.file_path}:${event.tool}`),
+    );
     const eventsDeleted = await this.db.deleteEventsByIds(excludedEventIds);
 
-    const reviews = await this.db.getAllFileReviewPaths();
-    const excludedReviewIds: number[] = [];
-    for (const review of reviews) {
-      if (isExcludedFile(review.file_path, extraGlobs)) {
-        excludedReviewIds.push(review.id);
-        affectedDates.add(review.date);
+    let fileReviewsDeleted = 0;
+    if (!options.isCancelled?.()) {
+      const reviews = await this.db.getAllFileReviewPaths();
+      const excludedReviewIds: number[] = [];
+      for (const review of reviews) {
+        const builtInExcluded = isExcludedFile(review.file_path);
+        const belongsToTaggedAssignment = taggedAssignmentReviewKeys.has(
+          `${review.file_path}:${review.tool}`,
+        );
+        if (
+          options.preserveAssignmentEvents &&
+          !builtInExcluded &&
+          (isAssignmentReviewDate(review.date) || belongsToTaggedAssignment)
+        ) {
+          continue;
+        }
+        if (isExcludedFile(review.file_path, extraGlobs)) {
+          excludedReviewIds.push(review.id);
+          affectedDates.add(review.date);
+        }
+      }
+      if (!options.isCancelled?.()) {
+        fileReviewsDeleted = await this.db.deleteFileReviewsByIds(excludedReviewIds);
       }
     }
-    const fileReviewsDeleted =
-      await this.db.deleteFileReviewsByIds(excludedReviewIds);
 
     const datesRecalculated: string[] = [];
     for (const date of affectedDates) {
@@ -822,7 +891,8 @@ export class MetricsRepository {
    * Used by dashboard to show files that need review
    */
   async getUnreviewedFiles(date: string): Promise<any[]> {
-    return await this.db.getUnreviewedFiles(date);
+    const files = await this.db.getUnreviewedFiles(date);
+    return files.filter((file) => !isExcludedFile(file.filePath));
   }
 
   /**
@@ -849,7 +919,13 @@ export class MetricsRepository {
     );
   }
 
-  async saveFileReviewStatus(status: any): Promise<void> {
+  async saveFileReviewStatus(
+    status: any,
+    extraGlobs: readonly string[] = [],
+  ): Promise<void> {
+    if (status?.filePath && isExcludedFile(status.filePath, extraGlobs)) {
+      return;
+    }
     return await this.db.insertOrUpdateFileReviewStatus(status);
   }
 

@@ -366,6 +366,13 @@ async function initializeStorage(
   // Keep storage in sync if the user toggles the setting at runtime.
   configManager.setOnConfigApplied((applied) => {
     databaseManager?.setAnonymizePaths(applied.anonymizePaths !== false);
+    // Apply changed exclusion globs right away (watcher + existing rows)
+    void metricsCollector?.applyExclusionSettings().then(async (removed) => {
+      if (removed > 0) {
+        await dashboardProvider?.refresh(true);
+        await statusBarManager?.refresh();
+      }
+    });
   });
 }
 
