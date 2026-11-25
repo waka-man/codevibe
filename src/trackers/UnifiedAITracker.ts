@@ -16,6 +16,7 @@ import { isExcludedFile, isPackageManagerManifestFile } from '../utils/ExcludedP
 import { ScaffoldActivityTracker } from '../detection/ScaffoldCommandDetector';
 import { ChangeAttributionClassifier } from '../detection/ChangeAttributionClassifier';
 import { isGitOperationActive, waitForGitIdle } from '../utils/GitOperationDetector';
+import { findGitMoveSource } from '../utils/GitMoveDetector';
 
 export class UnifiedAITracker extends BaseTracker {
   private aiDetector: AIDetector;
@@ -1007,6 +1008,18 @@ export class UnifiedAITracker extends BaseTracker {
                   this.log(`[PROCESS-CHANGE] File tracked with no diff vs HEAD - git operation detected (pull/merge/etc), will skip AI detection`);
                   isGitOperation = true;
                 } catch {
+                  // A VS Code move appears as a deleted tracked source plus an
+                  // untracked destination. If the committed content is
+                  // identical, this is a file operation, not new AI output.
+                  const movedFrom = findGitMoveSource(workspaceFolder, filePath);
+                  if (movedFrom !== null) {
+                    this.log(`[PROCESS-CHANGE] SKIPPED - pure Git move from ${movedFrom}: ${fileName}`);
+                    this.fileBaselines.set(filePath, currentLineCount);
+                    this.cumulativeAILines.set(filePath, 0);
+                    this.savePersistedBaselines();
+                    return;
+                  }
+
                   // New untracked file - use current line count. Do not use
                   // .gitignore as an AI exemption: students can edit it, and
                   // it commonly covers source and local configuration too.

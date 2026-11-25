@@ -104,10 +104,11 @@ describe('agentic file change detection (real git repo)', () => {
     fs.rmSync(repo, { recursive: true, force: true });
   });
 
-  async function fire(fileName: string): Promise<void> {
+  async function fire(fileName: string, newlyCreated = false): Promise<void> {
     await (tracker as any).processFileChange(
       { fsPath: path.join(repo, fileName), scheme: 'file' },
       path.join(repo, fileName),
+      newlyCreated,
     );
   }
 
@@ -136,6 +137,39 @@ describe('agentic file change detection (real git repo)', () => {
       'b.ts',
       'c.ts',
     ]);
+  });
+
+  it('does not flag a committed file moved into a new folder (#40)', async () => {
+    const original = path.join(repo, 'tracked.ts');
+    fs.writeFileSync(original, code(30, 'moved'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm moved-file', { cwd: repo });
+
+    const destinationDir = path.join(repo, 'public');
+    fs.mkdirSync(destinationDir);
+    fs.renameSync(original, path.join(destinationDir, 'tracked.ts'));
+
+    await fire(path.join('public', 'tracked.ts'), true);
+
+    expect(events).toHaveLength(0);
+  });
+
+  it('still flags a moved file when its content changed after the move', async () => {
+    const original = path.join(repo, 'tracked.ts');
+    fs.writeFileSync(original, code(10, 'moved'));
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm moved-file', { cwd: repo });
+
+    const destinationDir = path.join(repo, 'public');
+    fs.mkdirSync(destinationDir);
+    const destination = path.join(destinationDir, 'tracked.ts');
+    fs.renameSync(original, destination);
+    fs.appendFileSync(destination, code(5, 'agent'));
+
+    await fire(path.join('public', 'tracked.ts'), true);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].detectionMethod).toBe('external-file-change');
   });
 
   it('flags an existing tracked file that an agent appended to', async () => {
