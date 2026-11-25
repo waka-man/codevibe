@@ -994,10 +994,7 @@ export class UnifiedAITracker extends BaseTracker {
                 const movedFrom = findGitMoveSource(workspaceFolder, filePath);
                 if (movedFrom !== null) {
                   this.log(`[PROCESS-CHANGE] SKIPPED - pure Git move from ${movedFrom}: ${fileName}`);
-                  const sourcePath = path.join(
-                    workspaceFolder,
-                    ...movedFrom.split('/'),
-                  );
+                  const sourcePath = movedFrom;
                   this.fileBaselines.delete(sourcePath);
                   this.cumulativeAILines.delete(sourcePath);
                   this.fileBaselines.set(filePath, currentLineCount);

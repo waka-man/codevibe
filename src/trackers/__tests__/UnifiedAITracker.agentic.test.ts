@@ -181,6 +181,8 @@ describe('agentic file change detection (real git repo)', () => {
     fs.mkdirSync(destinationDir);
     const destination = path.join(destinationDir, 'tracked.ts');
     fs.renameSync(original, destination);
+    (tracker as any).fileBaselines.set(original, 30);
+    (tracker as any).cumulativeAILines.set(original, 5);
 
     const vscode = require('vscode');
     vscode.workspace.workspaceFolders = [{ uri: { fsPath: workspace }, name: 'sub' }];
@@ -192,6 +194,9 @@ describe('agentic file change detection (real git repo)', () => {
     );
 
     expect(events).toHaveLength(0);
+    expect((tracker as any).fileBaselines.has(original)).toBe(false);
+    expect((tracker as any).cumulativeAILines.has(original)).toBe(false);
+    expect((tracker as any).fileBaselines.get(destination)).toBe(30);
   });
 
   it('handles pure moves with spaces in the file path', async () => {

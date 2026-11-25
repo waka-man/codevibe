@@ -19,13 +19,14 @@ function git(
       cwd: workspaceFolder,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: 16 * 1024 * 1024,
     }) ?? '',
   );
 }
 
 /**
- * Return the tracked source path whose content matches `filePath`, or null
- * when this is not a pure move. All commands use argument arrays, so spaces,
+ * Return the absolute tracked source path whose content matches `filePath`,
+ * or null when this is not a pure move. All commands use argument arrays, so spaces,
  * quotes, and shell metacharacters in paths remain literal.
  */
 export function findGitMoveSource(
@@ -92,7 +93,7 @@ export function findGitMoveSource(
         `:${relativePath}`,
       ]).trim();
       if (stagedHash === destinationHash) {
-        return sourcePath;
+        return path.join(repoRoot, ...sourcePath.split('/'));
       }
     }
 
@@ -121,7 +122,7 @@ export function findGitMoveSource(
       const sameBasename =
         path.posix.basename(deletedPath) === path.posix.basename(relativePath);
       if (sameBasename && blobHash === destinationHash) {
-        return deletedPath;
+        return path.join(repoRoot, ...deletedPath.split('/'));
       }
     }
   } catch {
