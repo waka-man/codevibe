@@ -79,7 +79,10 @@ export class MetricsRepository {
    */
   async purgeExcludedEvents(
     extraGlobs: string[] = [],
-    options: { preserveAssignmentEvents?: boolean } = {},
+    options: {
+      preserveAssignmentEvents?: boolean;
+      isCancelled?: () => boolean;
+    } = {},
   ): Promise<{
     eventsDeleted: number;
     fileReviewsDeleted: number;
@@ -128,26 +131,42 @@ export class MetricsRepository {
         affectedDates.add(toLocalDateString(event.timestamp));
       }
     }
+    if (options.isCancelled?.()) {
+      return { eventsDeleted: 0, fileReviewsDeleted: 0, datesRecalculated: [] };
+    }
+
+    const taggedAssignmentReviewKeys = new Set(
+      events
+        .filter((event) => event.assignment_id !== null && event.file_path)
+        .map((event) => `${event.file_path}:${event.tool}`),
+    );
     const eventsDeleted = await this.db.deleteEventsByIds(excludedEventIds);
 
-    const reviews = await this.db.getAllFileReviewPaths();
-    const excludedReviewIds: number[] = [];
-    for (const review of reviews) {
-      const builtInExcluded = isExcludedFile(review.file_path);
-      if (
-        options.preserveAssignmentEvents &&
-        isAssignmentReviewDate(review.date) &&
-        !builtInExcluded
-      ) {
-        continue;
+    let fileReviewsDeleted = 0;
+    if (!options.isCancelled?.()) {
+      const reviews = await this.db.getAllFileReviewPaths();
+      const excludedReviewIds: number[] = [];
+      for (const review of reviews) {
+        const builtInExcluded = isExcludedFile(review.file_path);
+        const belongsToTaggedAssignment = taggedAssignmentReviewKeys.has(
+          `${review.file_path}:${review.tool}`,
+        );
+        if (
+          options.preserveAssignmentEvents &&
+          !builtInExcluded &&
+          (isAssignmentReviewDate(review.date) || belongsToTaggedAssignment)
+        ) {
+          continue;
+        }
+        if (isExcludedFile(review.file_path, extraGlobs)) {
+          excludedReviewIds.push(review.id);
+          affectedDates.add(review.date);
+        }
       }
-      if (isExcludedFile(review.file_path, extraGlobs)) {
-        excludedReviewIds.push(review.id);
-        affectedDates.add(review.date);
+      if (!options.isCancelled?.()) {
+        fileReviewsDeleted = await this.db.deleteFileReviewsByIds(excludedReviewIds);
       }
     }
-    const fileReviewsDeleted =
-      await this.db.deleteFileReviewsByIds(excludedReviewIds);
 
     const datesRecalculated: string[] = [];
     for (const date of affectedDates) {

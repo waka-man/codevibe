@@ -123,6 +123,34 @@ describe('MetricsCollector', () => {
   });
 
   describe('Exclusion settings', () => {
+    it('evicts purged review caches so excluded rows cannot be resurrected', async () => {
+      const excludedPath = '/repo/src/generated/types.ts';
+      const config = mockConfigManager.getConfig();
+      mockConfigManager.getConfig.mockReturnValue({
+        ...config,
+        excludedGlobs: ['src/generated/**'],
+      });
+      const sessionTracker = (collector as any).fileReviewSessionTracker;
+      const reviewTracker = (collector as any).fileReviewTracker;
+      sessionTracker.startTracking(excludedPath, AITool.Cursor, 'session-1', 10);
+      reviewTracker.trackFile({
+        filePath: excludedPath,
+        date: '2026-01-01',
+        tool: AITool.Cursor,
+      });
+
+      await collector.applyExclusionSettings();
+
+      expect(sessionTracker.getAllSessions()).toEqual([]);
+      expect(reviewTracker.queryFiles()).toEqual([]);
+
+      // Narrowing the setting later must not bring the purged cache entries back.
+      mockConfigManager.getConfig.mockReturnValue({ ...config, excludedGlobs: [] });
+      await collector.applyExclusionSettings(true);
+      expect(sessionTracker.getAllSessions()).toEqual([]);
+      expect(reviewTracker.queryFiles()).toEqual([]);
+    });
+
     it('purges built-in excluded rows on startup even without custom globs', async () => {
       mockMetricsRepo.purgeExcludedEvents.mockResolvedValue({
         eventsDeleted: 2,
@@ -134,6 +162,7 @@ describe('MetricsCollector', () => {
 
       expect(mockMetricsRepo.purgeExcludedEvents).toHaveBeenCalledWith([], {
         preserveAssignmentEvents: true,
+        isCancelled: expect.any(Function),
       });
       expect(removed).toBe(3);
     });

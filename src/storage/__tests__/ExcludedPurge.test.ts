@@ -207,6 +207,40 @@ describe("Excluded-path purge", () => {
     ]);
   });
 
+  it("preserves reviews for tagged assignment events outside the date window", async () => {
+    const oldDate = "2020-01-01";
+    await dbManager.insertEvent({
+      ...makeEvent("/proj/src/graded.ts", 40),
+      assignmentId: "assignment-outside-window",
+      timestamp: new Date(`${oldDate}T12:00:00Z`).getTime(),
+    });
+    await dbManager.insertOrUpdateFileReviewStatus({
+      ...makeReview("/proj/src/graded.ts", 40),
+      date: oldDate,
+    });
+
+    const result = await metricsRepo.purgeExcludedEvents(["src/**"], {
+      preserveAssignmentEvents: true,
+    });
+
+    expect(result.eventsDeleted).toBe(0);
+    expect(result.fileReviewsDeleted).toBe(0);
+    expect(await dbManager.getRecentEvents(100)).toHaveLength(1);
+    expect(await dbManager.getFileReviewsForDate(oldDate)).toHaveLength(1);
+  });
+
+  it("cancels a queued purge before deleting when exclusions change", async () => {
+    await dbManager.insertEvent(makeEvent("/proj/src/scratch.ts", 5));
+
+    const result = await metricsRepo.purgeExcludedEvents(["src/**"], {
+      isCancelled: () => true,
+    });
+
+    expect(result.eventsDeleted).toBe(0);
+    expect(result.fileReviewsDeleted).toBe(0);
+    expect(await dbManager.getRecentEvents(100)).toHaveLength(1);
+  });
+
   it("never stores or lists excluded paths via the repository (#37)", async () => {
     const pnpmFile = "/proj/node_modules/.pnpm/vite@5/node_modules/vite/bin/vite.js";
     await metricsRepo.recordEvent(makeEvent(pnpmFile, 90));

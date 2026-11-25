@@ -28,7 +28,7 @@ export class UnifiedAITracker extends BaseTracker {
   private openFiles: Set<string> = new Set();
 
   // BUG FIX #1: Debouncing for rapid file changes
-  private recentFileChanges: Map<string, { timestamp: number; timer: NodeJS.Timeout }> = new Map();
+  private recentFileChanges: Map<string, { timestamp: number; timer: NodeJS.Timeout; newlyCreated: boolean }> = new Map();
   private readonly FILE_CHANGE_DEBOUNCE_MS = 5000; // 5 seconds
 
   // Track recent text change events (user edits, AI completions) to prevent double counting
@@ -822,7 +822,7 @@ export class UnifiedAITracker extends BaseTracker {
    * IMPORTANT: Only processes CLOSED files. Open files are handled by
    * the text change handler since VS Code receives proper change events.
    */
-  private async handleFileChange(uri: vscode.Uri): Promise<void> {
+  private async handleFileChange(uri: vscode.Uri, newlyCreated = false): Promise<void> {
     const filePath = uri.fsPath;
     const fileName = filePath.split('/').pop();
 
@@ -860,6 +860,7 @@ export class UnifiedAITracker extends BaseTracker {
     // Debounce rapid file changes (AI agents often make multiple quick writes)
     const existing = this.recentFileChanges.get(filePath);
     const now = Date.now();
+    const created = newlyCreated || existing?.newlyCreated === true;
 
     if (existing) {
       clearTimeout(existing.timer);
@@ -867,11 +868,11 @@ export class UnifiedAITracker extends BaseTracker {
       if (now - existing.timestamp < this.FILE_CHANGE_DEBOUNCE_MS) {
         // Within debounce window - reset timer and wait for changes to settle
         const timer = setTimeout(() => {
-          this.processFileChange(uri, filePath);
+          this.processFileChange(uri, filePath, created);
           this.recentFileChanges.delete(filePath);
         }, this.FILE_CHANGE_DEBOUNCE_MS);
 
-        this.recentFileChanges.set(filePath, { timestamp: now, timer });
+        this.recentFileChanges.set(filePath, { timestamp: now, timer, newlyCreated: created });
         return;
       }
     }
@@ -881,8 +882,8 @@ export class UnifiedAITracker extends BaseTracker {
       this.recentFileChanges.delete(filePath);
     }, this.FILE_CHANGE_DEBOUNCE_MS);
 
-    this.recentFileChanges.set(filePath, { timestamp: now, timer });
-    await this.processFileChange(uri, filePath);
+    this.recentFileChanges.set(filePath, { timestamp: now, timer, newlyCreated: created });
+    await this.processFileChange(uri, filePath, created);
   }
 
   /**
@@ -891,7 +892,11 @@ export class UnifiedAITracker extends BaseTracker {
    * File modified while closed = AI agent mode (HIGH confidence)
    * Uses git diff to get only the actual changed lines, not total file lines.
    */
-  private async processFileChange(uri: vscode.Uri, filePath: string): Promise<void> {
+  private async processFileChange(
+    uri: vscode.Uri,
+    filePath: string,
+    newlyCreated = false,
+  ): Promise<void> {
     const fileName = filePath.split('/').pop();
 
     // Defensive re-check (handleFileChange already filters, but file
@@ -909,7 +914,7 @@ export class UnifiedAITracker extends BaseTracker {
 
     // Files written while a project scaffolder runs (npx sv create, npm
     // create vite, ng new, ...) are boilerplate from that tool, not AI.
-    if (this.scaffoldActivity.isActiveFor(filePath)) {
+    if (this.scaffoldActivity.isActiveFor(filePath, newlyCreated)) {
       this.log(`[PROCESS-CHANGE] SKIPPED - written by a scaffolding command: ${fileName}`);
       try {
         const document = await vscode.workspace.openTextDocument(uri);
@@ -1094,7 +1099,7 @@ export class UnifiedAITracker extends BaseTracker {
    */
   private async handleFileCreation(uri: vscode.Uri): Promise<void> {
     // New file created = likely AI (especially if not in active editor)
-    await this.handleFileChange(uri);
+    await this.handleFileChange(uri, true);
   }
 
   /**

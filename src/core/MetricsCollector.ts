@@ -897,6 +897,19 @@ export class MetricsCollector implements IMetricsCollector {
     return this.policyEngine;
   }
 
+  private evictExcludedReviewState(globs: readonly string[]): void {
+    for (const session of this.fileReviewSessionTracker.getAllSessions()) {
+      if (isExcludedFile(session.filePath, globs)) {
+        this.fileReviewSessionTracker.stopTracking(session.filePath);
+      }
+    }
+    for (const status of this.fileReviewTracker.queryFiles()) {
+      if (isExcludedFile(status.filePath, globs)) {
+        this.fileReviewTracker.removeFile(status.filePath, status.date, status.tool);
+      }
+    }
+  }
+
   /**
    * Re-apply `codePause.excludedGlobs` after it changes (or on startup):
    * push the effective globs to the file watcher and drop rows already
@@ -923,7 +936,13 @@ export class MetricsCollector implements IMetricsCollector {
       try {
         const result = await this.metricsRepo.purgeExcludedEvents(globs, {
           preserveAssignmentEvents: true,
+          isCancelled: () =>
+            JSON.stringify(globs) !==
+            JSON.stringify(this.getEffectiveExcludedGlobs()),
         });
+        // Purged rows must not be restored later by periodic aggregation
+        // from the in-memory review caches.
+        this.evictExcludedReviewState(this.getEffectiveExcludedGlobs());
         return result.eventsDeleted + result.fileReviewsDeleted;
       } catch (error) {
         console.warn('[CodePause] Failed to purge newly excluded paths:', error);

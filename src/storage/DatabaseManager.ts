@@ -1659,6 +1659,7 @@ export class DatabaseManager implements IDatabaseManager {
       file_path: string | null;
       timestamp: number;
       assignment_id: string | null;
+      tool: string;
     }>
   > {
     if (!this.db) {
@@ -1666,13 +1667,14 @@ export class DatabaseManager implements IDatabaseManager {
     }
 
     const stmt = this.db.prepare(
-      "SELECT id, file_path, timestamp, assignment_id FROM events",
+      "SELECT id, file_path, timestamp, assignment_id, tool FROM events",
     );
     const rows: Array<{
       id: number;
       file_path: string | null;
       timestamp: number;
       assignment_id: string | null;
+      tool: string;
     }> = [];
     while (stmt.step()) {
       rows.push(
@@ -1681,6 +1683,7 @@ export class DatabaseManager implements IDatabaseManager {
           file_path: string | null;
           timestamp: number;
           assignment_id: string | null;
+          tool: string;
         },
       );
     }
@@ -1729,22 +1732,23 @@ export class DatabaseManager implements IDatabaseManager {
    * Lightweight scan of all file review rows for purge operations.
    */
   async getAllFileReviewPaths(): Promise<
-    Array<{ id: number; file_path: string; date: string }>
+    Array<{ id: number; file_path: string; date: string; tool: string }>
   > {
     if (!this.db) {
       throw new Error("Database not initialized");
     }
 
     const stmt = this.db.prepare(
-      "SELECT id, file_path, date FROM file_review_status",
+      "SELECT id, file_path, date, tool FROM file_review_status",
     );
-    const rows: Array<{ id: number; file_path: string; date: string }> = [];
+    const rows: Array<{ id: number; file_path: string; date: string; tool: string }> = [];
     while (stmt.step()) {
       rows.push(
         stmt.getAsObject() as unknown as {
           id: number;
           file_path: string;
           date: string;
+          tool: string;
         },
       );
     }
