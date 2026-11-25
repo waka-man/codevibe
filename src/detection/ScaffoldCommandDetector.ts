@@ -148,7 +148,7 @@ export function isScaffoldCommand(commandLine: string | undefined | null): boole
 function firstPositional(args: readonly string[]): string {
   for (const arg of args) {
     if (arg === '--') {
-      break;
+      continue;
     }
     if (!arg.startsWith('-')) {
       return arg;

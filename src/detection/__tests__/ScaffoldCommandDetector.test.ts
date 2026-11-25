@@ -103,6 +103,8 @@ describe('ScaffoldActivityTracker', () => {
     ['npx degit sveltejs/template app', '/repo/app'],
     ['pnpm dlx create-turbo@latest', '/repo'],
     ['npm create vite@latest my-app -- --template react', '/repo/my-app'],
+    ['npm create vite@latest -- my-app', '/repo/my-app'],
+    ['npx sv create -- my-app', '/repo/my-app'],
     ['npm init vue@latest app', '/repo/app'],
     ['ng new shop', '/repo/shop'],
     ['npx @angular/cli new shop', '/repo/shop'],
@@ -121,6 +123,9 @@ describe('ScaffoldActivityTracker', () => {
     expect(tracker.start({}, command, '/repo')).toBe(true);
     expect(tracker.isActiveFor(`${root}/generated.ts`, true)).toBe(true);
     expect(tracker.isActiveFor(`${root}/existing.ts`, false)).toBe(false);
+    if (root !== '/repo') {
+      expect(tracker.isActiveFor('/repo/src/unrelated.ts', true)).toBe(false);
+    }
   });
 
   it.each([

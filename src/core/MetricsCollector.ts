@@ -941,7 +941,10 @@ export class MetricsCollector implements IMetricsCollector {
             JSON.stringify(this.getEffectiveExcludedGlobs()),
         });
         // Purged rows must not be restored later by periodic aggregation
-        // from the in-memory review caches.
+        // from the in-memory review caches. Evict both the snapshot that was
+        // actually purged and the current settings, which may have changed
+        // while the asynchronous purge was running.
+        this.evictExcludedReviewState(globs);
         this.evictExcludedReviewState(this.getEffectiveExcludedGlobs());
         return result.eventsDeleted + result.fileReviewsDeleted;
       } catch (error) {

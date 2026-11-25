@@ -151,6 +151,43 @@ describe('MetricsCollector', () => {
       expect(reviewTracker.queryFiles()).toEqual([]);
     });
 
+    it('evicts the purged glob snapshot when settings change mid-purge', async () => {
+      const excludedPath = '/repo/src/generated/types.ts';
+      const config = mockConfigManager.getConfig();
+      mockConfigManager.getConfig.mockReturnValue({
+        ...config,
+        excludedGlobs: ['src/generated/**'],
+      });
+      let finishPurge: (value: {
+        eventsDeleted: number;
+        fileReviewsDeleted: number;
+        datesRecalculated: string[];
+      }) => void = () => undefined;
+      mockMetricsRepo.purgeExcludedEvents.mockImplementation(
+        () => new Promise((resolve) => { finishPurge = resolve; }),
+      );
+      const sessionTracker = (collector as any).fileReviewSessionTracker;
+      const reviewTracker = (collector as any).fileReviewTracker;
+      sessionTracker.startTracking(excludedPath, AITool.Cursor, 'session-1', 10);
+      reviewTracker.trackFile({
+        filePath: excludedPath,
+        date: '2026-01-01',
+        tool: AITool.Cursor,
+      });
+
+      const pending = collector.applyExclusionSettings();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(mockMetricsRepo.purgeExcludedEvents).toHaveBeenCalled();
+
+      mockConfigManager.getConfig.mockReturnValue({ ...config, excludedGlobs: [] });
+      finishPurge({ eventsDeleted: 1, fileReviewsDeleted: 1, datesRecalculated: [] });
+      await pending;
+
+      expect(sessionTracker.getAllSessions()).toEqual([]);
+      expect(reviewTracker.queryFiles()).toEqual([]);
+    });
+
     it('purges built-in excluded rows on startup even without custom globs', async () => {
       mockMetricsRepo.purgeExcludedEvents.mockResolvedValue({
         eventsDeleted: 2,
