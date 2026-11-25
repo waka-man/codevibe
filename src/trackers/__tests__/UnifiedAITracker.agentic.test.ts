@@ -232,6 +232,28 @@ describe('agentic file change detection (real git repo)', () => {
     expect(events[0].detectionMethod).toBe('external-file-change');
   });
 
+  it('handles large same-basename deletion sets without exceeding argv limits', async () => {
+    const sources: string[] = [];
+    for (let i = 0; i < 250; i++) {
+      const dir = path.join(repo, `dir-${i}`);
+      fs.mkdirSync(dir);
+      const source = path.join(dir, 'same.ts');
+      fs.writeFileSync(source, code(5, 'same'));
+      sources.push(source);
+    }
+    execSync('git add -A', { cwd: repo });
+    execSync('git commit -qm bulk-sources', { cwd: repo });
+
+    for (const source of sources) {
+      fs.rmSync(source);
+    }
+    fs.writeFileSync(path.join(repo, 'same.ts'), code(5, 'same'));
+
+    await fire('same.ts', true);
+
+    expect(events).toHaveLength(0);
+  });
+
   it('does not treat identical content with a different basename as a move', async () => {
     const original = path.join(repo, 'seed.txt');
     fs.writeFileSync(original, code(30, 'seed'));

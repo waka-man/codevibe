@@ -31,11 +31,10 @@ function toPosix(filePath: string): string {
 
 /** Resolve a repository-relative source through the workspace's own path. */
 function resolveWorkspaceSource(
-  repoRoot: string,
   workspaceFolder: string,
+  workspaceRepoPath: string,
   sourceRepoPath: string,
 ): string | null {
-  const workspaceRepoPath = toPosix(path.relative(repoRoot, workspaceFolder)) || '.';
   const relativeToWorkspace = path.posix.relative(workspaceRepoPath, sourceRepoPath);
   if (
     !relativeToWorkspace ||
@@ -73,6 +72,8 @@ export function findGitMoveSource(
       '--show-toplevel',
     ]).trim();
     const relativePath = toPosix(path.relative(repoRoot, filePath));
+    const workspaceRepoPath =
+      git(workspaceFolder, ['rev-parse', '--show-prefix']).trim().replace(/\/+$/, '') || '.';
 
     // --path applies the same clean filters / line-ending rules Git would use
     // for this destination, so CRLF and filtered files compare correctly.
@@ -109,7 +110,7 @@ export function findGitMoveSource(
           `:${relativePath}`,
         ]).trim();
         if (stagedHash === destinationHash) {
-          return resolveWorkspaceSource(repoRoot, workspaceFolder, sourcePath);
+          return resolveWorkspaceSource(workspaceFolder, workspaceRepoPath, sourcePath);
         }
       } else {
         i++; // ordinary status has one path token
@@ -128,35 +129,45 @@ export function findGitMoveSource(
     if (deletedPaths.length === 0) {
       return null;
     }
-    const deletedSet = new Set(deletedPaths);
-    const deletedEntries = git(workspaceFolder, [
-      '--literal-pathspecs',
-      'ls-files',
-      '--stage',
-      '--full-name',
-      '-z',
-      '--',
-      ...deletedPaths,
-    ], repoRoot).split('\0').filter(Boolean);
+    // Git cannot correlate an untracked destination by itself. Require the
+    // same basename as corroborating evidence so an unrelated deleted file
+    // with identical bytes cannot suppress genuine agent output.
+    const destinationBasename = path.posix.basename(relativePath);
+    const candidates = deletedPaths.filter(
+      (deletedPath) => path.posix.basename(deletedPath) === destinationBasename,
+    );
+    const candidateSet = new Set(candidates);
 
-    for (const entry of deletedEntries) {
-      const separator = entry.indexOf('\t');
-      if (separator < 0) {
-        continue;
-      }
-      const header = entry.slice(0, separator);
-      const deletedPath = entry.slice(separator + 1);
-      if (!deletedSet.has(deletedPath)) {
-        continue;
-      }
-      const blobHash = /^\d+ ([0-9a-f]+) \d+$/.exec(header)?.[1];
-      // Git cannot correlate an untracked destination by itself. Require the
-      // same basename as corroborating evidence so an unrelated deleted file
-      // with identical bytes cannot suppress genuine agent output.
-      const sameBasename =
-        path.posix.basename(deletedPath) === path.posix.basename(relativePath);
-      if (sameBasename && blobHash === destinationHash) {
-        return resolveWorkspaceSource(repoRoot, workspaceFolder, deletedPath);
+    // Bound argv size for large deletion sets (Windows has a much lower
+    // command-line limit than POSIX). In normal moves the basename filter
+    // leaves only one or two candidates.
+    const BATCH_SIZE = 100;
+    for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
+      const batch = candidates.slice(i, i + BATCH_SIZE);
+      const deletedEntries = git(workspaceFolder, [
+        '--literal-pathspecs',
+        'ls-files',
+        '--stage',
+        '--full-name',
+        '-z',
+        '--',
+        ...batch,
+      ], repoRoot).split('\0').filter(Boolean);
+
+      for (const entry of deletedEntries) {
+        const separator = entry.indexOf('\t');
+        if (separator < 0) {
+          continue;
+        }
+        const header = entry.slice(0, separator);
+        const deletedPath = entry.slice(separator + 1);
+        if (!candidateSet.has(deletedPath)) {
+          continue;
+        }
+        const blobHash = /^\d+ ([0-9a-f]+) \d+$/.exec(header)?.[1];
+        if (blobHash === destinationHash) {
+          return resolveWorkspaceSource(workspaceFolder, workspaceRepoPath, deletedPath);
+        }
       }
     }
   } catch {
