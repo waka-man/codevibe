@@ -58,6 +58,7 @@ export class MetricsCollector implements IMetricsCollector {
   private assignmentManager: AssignmentManager;
   private policyEngine: PolicyEngine;
   private activeAssignment: Assignment | null = null;
+  private exclusionSettingsQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private metricsRepo: MetricsRepository,
@@ -172,8 +173,9 @@ export class MetricsCollector implements IMetricsCollector {
       // Without this, files generated before extension reload won't be tracked for auto-review
       await this.restoreUnreviewedFileTracking();
 
-      // Drop rows under user-excluded paths recorded before the glob existed
-      await this.applyExclusionSettings();
+      // Drop historical rows under built-in or user-excluded paths. Built-in
+      // cleanup must run even when the user has no custom globs.
+      await this.applyExclusionSettings(true);
 
       // Start periodic aggregation
       this.startAggregation();
@@ -432,7 +434,10 @@ export class MetricsCollector implements IMetricsCollector {
       this.fileReviewTracker.trackFile(fileStatus);
 
       // Persist to database
-      this.metricsRepo.saveFileReviewStatus(fileStatus).catch(err => {
+      this.metricsRepo.saveFileReviewStatus(
+        fileStatus,
+        this.getEffectiveExcludedGlobs(),
+      ).catch(err => {
         console.error('[CodePause] Failed to save file review status:', err);
       });
 
@@ -626,7 +631,10 @@ export class MetricsCollector implements IMetricsCollector {
     // Process event through handleEvent for file review tracking and other logic
     this.handleEvent(event);
     // Also save to database
-    await this.metricsRepo.recordEvent(event);
+    await this.metricsRepo.recordEvent(
+      event,
+      this.getEffectiveExcludedGlobs(),
+    );
   }
 
   getPendingSuggestion(id: string): PendingSuggestion | undefined {
@@ -693,7 +701,10 @@ export class MetricsCollector implements IMetricsCollector {
 
     try {
       for (const event of events) {
-        await this.metricsRepo.recordEvent(event);
+        await this.metricsRepo.recordEvent(
+          event,
+          this.getEffectiveExcludedGlobs(),
+        );
       }
     } catch (error) {
       console.error('[CodePause] Error flushing events:', error);
@@ -771,7 +782,10 @@ export class MetricsCollector implements IMetricsCollector {
           reviewSessionsCount: existingStatus?.reviewSessionsCount || 0
         };
 
-        await this.metricsRepo.saveFileReviewStatus(fileStatus).catch(err => {
+        await this.metricsRepo.saveFileReviewStatus(
+          fileStatus,
+          this.getEffectiveExcludedGlobs(),
+        ).catch(err => {
           console.error('[CodePause] Failed to sync file review session:', err);
         });
       }
@@ -887,24 +901,40 @@ export class MetricsCollector implements IMetricsCollector {
    * Re-apply `codePause.excludedGlobs` after it changes (or on startup):
    * push the effective globs to the file watcher and drop rows already
    * recorded under newly excluded paths, so the dashboard reflects the
-   * setting immediately. Skipped during an assignment (custom globs are
-   * locked out), and assignment-linked events are never purged by them.
+   * setting immediately. Custom globs are locked out during an assignment;
+   * built-in generated/dependency cleanup can still run at startup.
    */
-  async applyExclusionSettings(): Promise<number> {
+  async applyExclusionSettings(purgeBuiltIn = false): Promise<number> {
     const globs = this.getEffectiveExcludedGlobs();
     this.unifiedAITracker?.setCustomExclusions(globs);
-    if (this.activeAssignment || globs.length === 0) {
-      return 0;
-    }
-    try {
-      const result = await this.metricsRepo.purgeExcludedEvents(globs, {
-        preserveAssignmentEvents: true,
-      });
-      return result.eventsDeleted + result.fileReviewsDeleted;
-    } catch (error) {
-      console.warn('[CodePause] Failed to purge newly excluded paths:', error);
-      return 0;
-    }
+
+    // Serialize purges so rapid settings changes cannot overlap database
+    // scans/deletes. A queued stale snapshot is skipped before it starts.
+    const run = this.exclusionSettingsQueue.then(async () => {
+      if (
+        JSON.stringify(globs) !==
+        JSON.stringify(this.getEffectiveExcludedGlobs())
+      ) {
+        return 0;
+      }
+      if (!purgeBuiltIn && globs.length === 0) {
+        return 0;
+      }
+      try {
+        const result = await this.metricsRepo.purgeExcludedEvents(globs, {
+          preserveAssignmentEvents: true,
+        });
+        return result.eventsDeleted + result.fileReviewsDeleted;
+      } catch (error) {
+        console.warn('[CodePause] Failed to purge newly excluded paths:', error);
+        return 0;
+      }
+    });
+    this.exclusionSettingsQueue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   getActiveAssignment(): Assignment | null {

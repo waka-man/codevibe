@@ -27,6 +27,8 @@ describe('isScaffoldCommand', () => {
     'dotnet new console',
     'flutter create app',
     'git clone https://github.com/org/repo.git',
+    'cd app && npx sv create demo',
+    'npm run build; ng new shop',
   ])('recognises "%s"', (cmd) => {
     expect(isScaffoldCommand(cmd)).toBe(true);
   });
@@ -40,6 +42,8 @@ describe('isScaffoldCommand', () => {
     'codex "write the router"',
     'node scripts/create-user.js',
     'git commit -m "create routes"',
+    'echo "npx sv create demo"',
+    'printf "%s\\n" "ng new shop"',
     '',
   ])('does not treat "%s" as scaffolding', (cmd) => {
     expect(isScaffoldCommand(cmd)).toBe(false);
@@ -47,23 +51,40 @@ describe('isScaffoldCommand', () => {
 });
 
 describe('ScaffoldActivityTracker', () => {
-  it('is active while a scaffolder runs and for the grace period after', () => {
+  it('is active only inside the scaffolder cwd while running and during grace', () => {
     const tracker = new ScaffoldActivityTracker(5_000);
     const exec = {};
     expect(tracker.isActive(1_000)).toBe(false);
 
-    expect(tracker.start(exec, 'npx sv create app')).toBe(true);
-    expect(tracker.isActive(2_000)).toBe(true);
+    expect(tracker.start(exec, 'npx sv create app', '/repo')).toBe(true);
+    expect(tracker.isActiveFor('/repo/app/src/main.ts', 2_000)).toBe(true);
+    expect(tracker.isActiveFor('/other/src/main.ts', 2_000)).toBe(false);
+    expect(tracker.isActiveFor('/repo-other/src/main.ts', 2_000)).toBe(false);
 
     tracker.end(exec, 10_000);
-    expect(tracker.isActive(14_000)).toBe(true);
-    expect(tracker.isActive(15_001)).toBe(false);
+    expect(tracker.isActiveFor('/repo/app/src/main.ts', 14_000)).toBe(true);
+    expect(tracker.isActiveFor('/repo/app/src/main.ts', 15_001)).toBe(false);
+    expect(tracker.isActiveFor('/other/src/main.ts', 14_000)).toBe(false);
+  });
+
+  it('does not track commands without a safely scopeable cwd', () => {
+    const tracker = new ScaffoldActivityTracker(5_000);
+    expect(tracker.start({}, 'npx sv create app')).toBe(false);
+    expect(tracker.isActiveFor('/repo/app.ts', 2_000)).toBe(false);
+  });
+
+  it('bounds suppression even if a scaffolder waits for input', () => {
+    const tracker = new ScaffoldActivityTracker(5_000, 10_000);
+    const exec = {};
+    expect(tracker.start(exec, 'npx sv create app', '/repo', 1_000)).toBe(true);
+    expect(tracker.isActiveFor('/repo/app.ts', 11_000)).toBe(true);
+    expect(tracker.isActiveFor('/repo/app.ts', 11_001)).toBe(false);
   });
 
   it('ignores non-scaffold commands', () => {
     const tracker = new ScaffoldActivityTracker(5_000);
     const exec = {};
-    expect(tracker.start(exec, 'pnpm dev')).toBe(false);
+    expect(tracker.start(exec, 'pnpm dev', '/repo')).toBe(false);
     tracker.end(exec, 1_000);
     expect(tracker.isActive(100_000)).toBe(false);
   });

@@ -12,6 +12,7 @@ import { MetricsRepository } from "../MetricsRepository";
 import {
   TrackingEvent,
   FileReviewStatus,
+  Assignment,
   AITool,
   EventType,
   CodeSource,
@@ -175,6 +176,37 @@ describe("Excluded-path purge", () => {
     expect(remaining.map((e) => e.filePath)).toEqual(["/proj/src/graded.ts"]);
   });
 
+  it("preserves untagged assignment-window events and their reviews from user globs", async () => {
+    const assignment: Assignment = {
+      id: "assignment-window-1",
+      name: "Windowed assignment",
+      startDate: today,
+      endDate: today,
+      createdAt: Date.now() - 60_000,
+      updatedAt: Date.now(),
+      isActive: false,
+      policy: {} as Assignment["policy"],
+    };
+    await dbManager.insertOrUpdateAssignment(assignment);
+    await dbManager.insertEvent(makeEvent("/proj/src/graded.ts", 40));
+    await dbManager.insertOrUpdateFileReviewStatus(
+      makeReview("/proj/src/graded.ts", 40),
+    );
+
+    const result = await metricsRepo.purgeExcludedEvents(["src/**"], {
+      preserveAssignmentEvents: true,
+    });
+
+    expect(result.eventsDeleted).toBe(0);
+    expect(result.fileReviewsDeleted).toBe(0);
+    const remaining = await dbManager.getRecentEvents(100);
+    expect(remaining.map((e) => e.filePath)).toEqual(["/proj/src/graded.ts"]);
+    const reviews = await dbManager.getFileReviewsForDate(today);
+    expect(reviews.map((review) => review.filePath)).toEqual([
+      "/proj/src/graded.ts",
+    ]);
+  });
+
   it("never stores or lists excluded paths via the repository (#37)", async () => {
     const pnpmFile = "/proj/node_modules/.pnpm/vite@5/node_modules/vite/bin/vite.js";
     await metricsRepo.recordEvent(makeEvent(pnpmFile, 90));
@@ -188,6 +220,23 @@ describe("Excluded-path purge", () => {
     expect(await dbManager.getRecentEvents(100)).toEqual([]);
     const unreviewed = await metricsRepo.getUnreviewedFiles(today);
     expect(unreviewed.map((f: any) => f.filePath)).toEqual(["/proj/src/app.ts"]);
+  });
+
+  it("does not re-store custom-excluded events or review rows", async () => {
+    const eventPath = "/proj/src/generated/types.ts";
+    const reviewPath = "/proj/src/generated/review.ts";
+
+    expect(
+      await metricsRepo.recordEvent(makeEvent(eventPath, 20), [
+        "src/generated/**",
+      ]),
+    ).toBe(0);
+    await metricsRepo.saveFileReviewStatus(makeReview(reviewPath, 20), [
+      "src/generated/**",
+    ]);
+
+    expect(await dbManager.getRecentEvents(100)).toEqual([]);
+    expect(await dbManager.getFileReviewsForDate(today)).toEqual([]);
   });
 
   it("records and retrieves the exclusion audit trail", async () => {

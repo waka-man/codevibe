@@ -57,7 +57,16 @@ describe('MetricsCollector', () => {
       getDailyMetrics: jest.fn<() => Promise<DailyMetrics | null>>().mockResolvedValue(null),
       saveSession: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
       calculateDailyMetrics: jest.fn<() => Promise<DailyMetrics>>().mockResolvedValue(createMockDailyMetrics()),
-      saveFileReviewStatus: jest.fn<() => Promise<void>>().mockResolvedValue(undefined)
+      saveFileReviewStatus: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      purgeExcludedEvents: jest.fn<() => Promise<{
+        eventsDeleted: number;
+        fileReviewsDeleted: number;
+        datesRecalculated: string[];
+      }>>().mockResolvedValue({
+        eventsDeleted: 0,
+        fileReviewsDeleted: 0,
+        datesRecalculated: [],
+      })
     } as unknown as jest.Mocked<MetricsRepository>;
 
     mockConfigManager = {
@@ -113,6 +122,23 @@ describe('MetricsCollector', () => {
     });
   });
 
+  describe('Exclusion settings', () => {
+    it('purges built-in excluded rows on startup even without custom globs', async () => {
+      mockMetricsRepo.purgeExcludedEvents.mockResolvedValue({
+        eventsDeleted: 2,
+        fileReviewsDeleted: 1,
+        datesRecalculated: ['2026-01-01'],
+      });
+
+      const removed = await collector.applyExclusionSettings(true);
+
+      expect(mockMetricsRepo.purgeExcludedEvents).toHaveBeenCalledWith([], {
+        preserveAssignmentEvents: true,
+      });
+      expect(removed).toBe(3);
+    });
+  });
+
   describe('Event Handling', () => {
     beforeEach(async () => {
       await collector.initialize();
@@ -128,7 +154,7 @@ describe('MetricsCollector', () => {
 
       await collector.recordEvent(event);
 
-      expect(mockMetricsRepo.recordEvent).toHaveBeenCalledWith(event);
+      expect(mockMetricsRepo.recordEvent).toHaveBeenCalledWith(event, []);
     });
 
     it('should handle suggestion displayed event', async () => {
@@ -436,7 +462,7 @@ describe('MetricsCollector', () => {
 
       await collector.recordEvent(event);
 
-      expect(mockMetricsRepo.recordEvent).toHaveBeenCalledWith(event);
+      expect(mockMetricsRepo.recordEvent).toHaveBeenCalledWith(event, []);
     });
 
     it('should save session through repository', async () => {

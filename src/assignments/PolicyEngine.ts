@@ -425,7 +425,12 @@ export class PolicyEngine {
     const endTime = startOfLocalDay(addDays(endDate, 1)); // Include full end day
     const now = Date.now();
 
-    const sorted = [...events].sort((a, b) => a.timestamp - b.timestamp);
+    const sorted = events
+      .filter(
+        (event) =>
+          event.timestamp >= startTime && event.timestamp < endTime,
+      )
+      .sort((a, b) => a.timestamp - b.timestamp);
 
     // Gap from start of assignment to first event
     if (sorted.length > 0) {

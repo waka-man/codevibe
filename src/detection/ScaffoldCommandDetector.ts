@@ -7,12 +7,13 @@
  * those files are closed. The file watcher treats closed-file writes as AI
  * agent mode, so a fresh boilerplate project was reported as AI-authored.
  * While a known scaffolder is running (plus a short grace period for late
- * watcher events), external file writes are attributed to the tool, not AI.
+ * watcher events), external file writes inside that terminal's working
+ * directory are attributed to the tool, not AI.
  *
  * Deliberately narrow: only one-shot generators are listed. Long-running
  * dev servers (`pnpm dev`) are NOT, since suppressing AI detection for a whole
  * dev session would hide real agent writes; their output dirs are handled by
- * the generated-path ignore list and the git-ignore check instead.
+ * the generated-path ignore list instead.
  *
  * Dependency-free (no vscode import) so it is unit-testable.
  */
@@ -46,35 +47,105 @@ export function isScaffoldCommand(commandLine: string | undefined | null): boole
     return false;
   }
   const normalized = commandLine.trim().toLowerCase();
-  return SCAFFOLD_PATTERNS.some((pattern) => pattern.test(normalized));
+  // Only inspect actual shell-command segments. Searching the whole line
+  // would misclassify commands such as `echo "npx sv create"` and suppress
+  // unrelated AI detection. Compound commands such as
+  // `cd app && npx sv create demo` are still recognised.
+  const segments = normalized.split(/(?:&&|\|\||;)/);
+  return segments.some((rawSegment) => {
+    const segment = rawSegment.trim();
+    return SCAFFOLD_PATTERNS.some((pattern) => pattern.exec(segment)?.index === 0);
+  });
+}
+
+function normalizePath(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, '/').replace(/\/+$/, '');
+  return (normalized || '/').toLowerCase();
+}
+
+function isWithin(rootPath: string, filePath: string): boolean {
+  const root = normalizePath(rootPath);
+  const file = normalizePath(filePath);
+  if (root === '/') {
+    return file.startsWith('/');
+  }
+  return file === root || file.startsWith(`${root}/`);
+}
+
+interface RunningScaffold {
+  rootPath: string;
+  startedAt: number;
 }
 
 /**
- * Tracks running scaffold commands. `isActive()` stays true while any is
- * running and for `graceMs` after the last one ends (watcher events lag).
+ * Tracks running scaffold commands. Suppression is scoped to the terminal's
+ * working directory and bounded by `maxRunningMs`, so a generator waiting for
+ * input cannot blind AI detection indefinitely.
  */
 export class ScaffoldActivityTracker {
-  private readonly running = new Set<unknown>();
-  private lastEndedAt = Number.NEGATIVE_INFINITY;
+  private readonly running = new Map<unknown, RunningScaffold>();
+  private readonly recentlyEnded = new Map<string, number>();
 
-  constructor(private readonly graceMs: number = 10_000) {}
+  constructor(
+    private readonly graceMs: number = 10_000,
+    private readonly maxRunningMs: number = 5 * 60_000,
+  ) {}
 
-  /** Record a terminal command start; returns true if it is a scaffolder. */
-  start(key: unknown, commandLine: string | undefined | null): boolean {
-    if (!isScaffoldCommand(commandLine)) {
+  /** Record a terminal command start; returns true if it is a safely scoped scaffolder. */
+  start(
+    key: unknown,
+    commandLine: string | undefined | null,
+    rootPath?: string,
+    now: number = Date.now(),
+  ): boolean {
+    if (!isScaffoldCommand(commandLine) || !rootPath) {
       return false;
     }
-    this.running.add(key);
+    this.running.set(key, { rootPath, startedAt: now });
     return true;
   }
 
   end(key: unknown, now: number = Date.now()): void {
-    if (this.running.delete(key)) {
-      this.lastEndedAt = now;
+    const running = this.running.get(key);
+    if (running) {
+      this.running.delete(key);
+      this.recentlyEnded.set(normalizePath(running.rootPath), now);
     }
   }
 
+  /** True while any safely scoped scaffolder is running or recently ended. */
   isActive(now: number = Date.now()): boolean {
-    return this.running.size > 0 || now - this.lastEndedAt <= this.graceMs;
+    this.removeExpired(now);
+    return this.running.size > 0 || [...this.recentlyEnded.values()]
+      .some((endedAt) => now - endedAt <= this.graceMs);
+  }
+
+  /** True only for files inside a running/recently-ended scaffolder's cwd. */
+  isActiveFor(filePath: string, now: number = Date.now()): boolean {
+    this.removeExpired(now);
+    for (const { rootPath } of this.running.values()) {
+      if (isWithin(rootPath, filePath)) {
+        return true;
+      }
+    }
+    for (const [rootPath, endedAt] of this.recentlyEnded) {
+      if (now - endedAt <= this.graceMs && isWithin(rootPath, filePath)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private removeExpired(now: number): void {
+    for (const [key, running] of this.running) {
+      if (now - running.startedAt > this.maxRunningMs) {
+        this.running.delete(key);
+      }
+    }
+    for (const [rootPath, endedAt] of this.recentlyEnded) {
+      if (now - endedAt > this.graceMs) {
+        this.recentlyEnded.delete(rootPath);
+      }
+    }
   }
 }

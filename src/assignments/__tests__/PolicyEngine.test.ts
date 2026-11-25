@@ -727,6 +727,35 @@ describe("PolicyEngine", () => {
       expect(gapViolations[0].count).toBe(2);
     });
 
+    it("never starts a gap before the assignment was created", () => {
+      const createdAt = new Date(2025, 0, 2, 7, 0, 0).getTime();
+      const createdAssignment: Assignment = {
+        ...assignment,
+        createdAt,
+        policy: { ...policy, maxTrackingGapSeconds: 1800 },
+      };
+      const events: TrackingEvent[] = [
+        manualEvent({
+          timestamp: new Date(2025, 0, 2, 6, 0, 0).getTime(),
+          filePath: "/repo/src/a.ts",
+          linesChanged: 10,
+        }),
+        manualEvent({
+          timestamp: new Date(2025, 0, 2, 9, 0, 0).getTime(),
+          filePath: "/repo/src/a.ts",
+          linesChanged: 10,
+        }),
+      ];
+
+      const metrics = engine.computeMetrics(createdAssignment, events, []);
+
+      expect(metrics.trackingGaps).toHaveLength(1);
+      expect(metrics.trackingGaps[0].startTime).toBe(createdAt);
+      expect(metrics.trackingGaps[0].endTime).toBe(
+        new Date(2025, 0, 2, 9, 0, 0).getTime(),
+      );
+    });
+
     it("records a trailing gap while the assignment window is still open", () => {
       const openAssignment: Assignment = {
         ...assignment,

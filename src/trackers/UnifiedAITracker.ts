@@ -117,20 +117,6 @@ export class UnifiedAITracker extends BaseTracker {
     return isExcludedFile(filePath, this.customExcludedGlobs);
   }
 
-  /** True if git ignores the (workspace-relative) path. */
-  private isGitIgnored(workspaceFolder: string, relativePath: string): boolean {
-    try {
-      const { execFileSync } = require('child_process');
-      execFileSync('git', ['check-ignore', '-q', '--', relativePath], {
-        cwd: workspaceFolder,
-        stdio: 'ignore',
-      });
-      return true; // exit 0 = ignored
-    } catch {
-      return false; // exit 1 = not ignored (or git unavailable)
-    }
-  }
-
   /** Git operation check for the text-change path (no file-level git work). */
   private isGitOperationActiveFor(): boolean {
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -329,7 +315,10 @@ export class UnifiedAITracker extends BaseTracker {
   private setupScaffoldCommandTracking(): void {
     const win = vscode.window as unknown as {
       onDidStartTerminalShellExecution?: vscode.Event<{
-        execution: { commandLine?: { value?: string } };
+        execution: {
+          commandLine?: { value?: string };
+          cwd?: { fsPath?: string };
+        };
       }>;
       onDidEndTerminalShellExecution?: vscode.Event<{ execution: unknown }>;
     };
@@ -339,7 +328,7 @@ export class UnifiedAITracker extends BaseTracker {
     this.disposables.push(
       win.onDidStartTerminalShellExecution((e) => {
         const command = e.execution.commandLine?.value;
-        if (this.scaffoldActivity.start(e.execution, command)) {
+        if (this.scaffoldActivity.start(e.execution, command, e.execution.cwd?.fsPath)) {
           this.log(`[SCAFFOLD] Scaffolding command started: ${command}`);
         }
       }),
@@ -920,7 +909,7 @@ export class UnifiedAITracker extends BaseTracker {
 
     // Files written while a project scaffolder runs (npx sv create, npm
     // create vite, ng new, ...) are boilerplate from that tool, not AI.
-    if (this.scaffoldActivity.isActive()) {
+    if (this.scaffoldActivity.isActiveFor(filePath)) {
       this.log(`[PROCESS-CHANGE] SKIPPED - written by a scaffolding command: ${fileName}`);
       try {
         const document = await vscode.workspace.openTextDocument(uri);
@@ -1013,16 +1002,9 @@ export class UnifiedAITracker extends BaseTracker {
                   this.log(`[PROCESS-CHANGE] File tracked with no diff vs HEAD - git operation detected (pull/merge/etc), will skip AI detection`);
                   isGitOperation = true;
                 } catch {
-                  // Untracked AND git-ignored = generated output (dev-server
-                  // caches, build dirs, codegen). It is never part of the
-                  // submitted source, so it is not AI authorship either.
-                  if (this.isGitIgnored(workspaceFolder, relativePath)) {
-                    this.log(`[PROCESS-CHANGE] SKIPPED - git-ignored generated file: ${fileName}`);
-                    this.fileBaselines.set(filePath, currentLineCount);
-                    this.savePersistedBaselines();
-                    return;
-                  }
-                  // New untracked file - use current line count
+                  // New untracked file - use current line count. Do not use
+                  // .gitignore as an AI exemption: students can edit it, and
+                  // it commonly covers source and local configuration too.
                   linesAdded = currentLineCount;
                   this.log(`[PROCESS-CHANGE] New untracked file: ${linesAdded} lines`);
                 }
